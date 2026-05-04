@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { repoConfig, type RepoConfig } from './repoConfig.ts';
 
 type Cli = {
 	command: string;
@@ -121,13 +122,14 @@ function parseCli(argv: string[]): Cli {
 
 async function deploy(cli: Cli) {
 	await ensureBaseDirs();
-	await ensureDependencies();
 
-	const repoArg = option(cli, 'repo') ?? cli.positionals[0] ?? 'decidaroo';
+	const repoArg = option(cli, 'repo') ?? cli.positionals[0] ?? 'decideroo';
 	const repo = resolveRepo(repoArg);
+	const config = requireRepoConfig(repo.name);
+	await ensureDependencies();
 	const name = sanitizeName(option(cli, 'name') ?? repo.name);
 	const domain = option(cli, 'domain') ?? defaultDomain;
-	const subdomain = option(cli, 'subdomain') ?? name;
+	const subdomain = option(cli, 'subdomain') ?? config.subdomain;
 	const hostname = option(cli, 'hostname') ?? `${subdomain}.${domain}`;
 	const tunnelName = sanitizeName(option(cli, 'tunnel') ?? defaultTunnelName);
 	const containerName = `paas-${name}`;
@@ -149,7 +151,7 @@ async function deploy(cli: Cli) {
 	const repoInfo = await resolveRepoInfo(repo.spec);
 	const repoDir = await ensureRepoCheckout(repoInfo.nameWithOwner, repoInfo.defaultBranchRef.name);
 	await runEnvManager(repoDir, name);
-	await runProjectChecks(repoDir, cli);
+	await runProjectChecks(repoDir, cli, config);
 
 	const commit = run('git', ['-C', repoDir, 'rev-parse', '--short=12', 'HEAD'], {
 		capture: true,
@@ -211,7 +213,8 @@ async function deploy(cli: Cli) {
 async function startFromCli(cli: Cli) {
 	await ensureBaseDirs();
 	const state = await readState();
-	const name = sanitizeName(option(cli, 'name') ?? cli.positionals[0] ?? 'decidaroo');
+	const name = sanitizeName(option(cli, 'name') ?? cli.positionals[0] ?? 'decideroo');
+	requireRepoConfig(name);
 	const app = state.apps[name];
 	if (!app) throw new Error(`No app named ${name} in ${statePath}`);
 	await ensureContainerRuntime();
@@ -302,6 +305,19 @@ function resolveRepo(repoArg: string) {
 	return { spec: repoArg, name: repoName };
 }
 
+function requireRepoConfig(repoName: string) {
+	const config = repoConfig[repoName];
+	if (config) return config;
+
+	throw new Error(
+		`No repo config found for "${repoName}". Add it to ${path.join(scriptDir, 'repoConfig.ts')} with something like:\n\n` +
+			`export const repoConfig = {\n` +
+			`  ...,\n` +
+			`  ${JSON.stringify(repoName)}: nodeClientServer({ subdomain: ${JSON.stringify(repoName)} }),\n` +
+			`};`,
+	);
+}
+
 async function ensureRepoCheckout(repoFullName: string, branch: string) {
 	const repoName = repoFullName.split('/')[1];
 	const repoDir = path.join(codeDir, repoName);
@@ -333,9 +349,9 @@ async function runEnvManager(repoDir: string, name: string) {
 	}
 }
 
-async function runProjectChecks(repoDir: string, cli: Cli) {
+async function runProjectChecks(repoDir: string, cli: Cli, config: RepoConfig) {
 	if (option(cli, 'skip-project-checks') === 'true') return;
-	run('bun', ['install', '--frozen-lockfile'], { cwd: repoDir });
+	await runInDirectory(repoDir, config.setup);
 
 	const packageJsonPath = path.join(repoDir, 'package.json');
 	const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
@@ -353,6 +369,16 @@ async function runProjectChecks(repoDir: string, cli: Cli) {
 		if (result.status !== 0 && !result.stderr.includes('No tests found')) {
 			throw new Error('bun test failed');
 		}
+	}
+}
+
+async function runInDirectory(directory: string, fn: () => Promise<void>) {
+	const previous = process.cwd();
+	process.chdir(directory);
+	try {
+		await fn();
+	} finally {
+		process.chdir(previous);
 	}
 }
 
