@@ -92,6 +92,8 @@ if (cli.command === 'deploy') {
 	await deploy(cli);
 } else if (cli.command === 'start') {
 	await startFromCli(cli);
+} else if (cli.command === 'refresh-router') {
+	await refreshRouterFromCli(cli);
 } else if (cli.command === 'status') {
 	await status();
 } else {
@@ -117,7 +119,7 @@ function parseCli(argv: string[]): Cli {
 		options.set(key, [...(options.get(key) ?? []), value]);
 	}
 
-	const commands = new Set(['deploy', 'start', 'status']);
+	const commands = new Set(['deploy', 'start', 'refresh-router', 'status']);
 	const command = options.has('status') ? 'status' : commands.has(positionals[0]) ? positionals.shift()! : 'deploy';
 	return { command, positionals, options };
 }
@@ -202,7 +204,7 @@ async function deploy(cli: Cli) {
 
 	await recreateContainer(state.apps[name], runtimeEnvPath);
 	await startApp(state.apps[name]);
-	await refreshContainerRoute(name, true);
+	await refreshContainerRoute(name, true, option(cli, 'defer-router-restart') !== 'true');
 	await ensureCloudflareDns(hostname, domain, tunnel);
 	await installAppLaunchAgent(name);
 	const routedState = await readState();
@@ -222,6 +224,13 @@ async function startFromCli(cli: Cli) {
 	await ensureContainerRuntime();
 	await startApp(app);
 	await refreshContainerRoute(name, false);
+}
+
+async function refreshRouterFromCli(cli: Cli) {
+	await ensureBaseDirs();
+	const name = sanitizeName(option(cli, 'name') ?? cli.positionals[0] ?? 'decideroo');
+	requireRepoConfig(name);
+	await refreshContainerRoute(name, true);
 }
 
 async function status() {
@@ -622,7 +631,7 @@ async function startApp(app: AppState) {
 	}
 }
 
-async function refreshContainerRoute(name: string, force: boolean) {
+async function refreshContainerRoute(name: string, force: boolean, restartRouter = true) {
 	const state = await readState();
 	const app = state.apps[name];
 	if (!app) throw new Error(`No app named ${name} in ${statePath}`);
@@ -639,7 +648,7 @@ async function refreshContainerRoute(name: string, force: boolean) {
 	const currentState = await readState();
 	const currentTunnel = await ensureTunnelInState(currentState, tunnel.name);
 	await writeCloudflaredRouterConfig(currentState, currentTunnel);
-	if (force || changed || !isContainerRunning(currentTunnel.containerName)) {
+	if (restartRouter && (force || changed || !isContainerRunning(currentTunnel.containerName))) {
 		await recreateCloudflaredRouter(currentTunnel);
 	}
 }
@@ -931,7 +940,7 @@ async function fetchWithTimeout(url: string, options: { headers?: Record<string,
 }
 
 async function installAppLaunchAgent(name: string) {
-	const bun = which('bun');
+	const bun = which('bun') || process.execPath;
 	if (!bun) throw new Error('bun is not installed');
 
 	const label = `lol.stf.repo-containers.${name}`;

@@ -4,7 +4,7 @@ import { repoConfig } from './repoConfig.ts';
 type ServerOptions = {
 	bearerKey: string;
 	configuredRepos?: Record<string, unknown>;
-	runUpdate: (repo: string) => Promise<void>;
+	runUpdate: (repo: string, writeLog: (chunk: string) => void) => Promise<void>;
 };
 
 export function createFetchHandler({
@@ -42,20 +42,50 @@ export function createFetchHandler({
 			return json({ error: `Update already running for "${repo}"`, ok: false }, 409);
 		}
 
-		activeUpdates.add(repo);
-		console.log(`[${new Date().toISOString()}] Updating ${repo}`);
-
-		try {
-			await runUpdate(repo);
-			console.log(`[${new Date().toISOString()}] Updated ${repo}`);
-			return json({ ok: true, repo });
-		} catch (error) {
-			console.error(`[${new Date().toISOString()}] Failed to update ${repo}`, error);
-			return json({ error: errorMessage(error), ok: false, repo }, 500);
-		} finally {
-			activeUpdates.delete(repo);
-		}
+		return streamUpdate(repo, activeUpdates, runUpdate);
 	};
+}
+
+function streamUpdate(
+	repo: string,
+	activeUpdates: Set<string>,
+	runUpdate: (repo: string, writeLog: (chunk: string) => void) => Promise<void>,
+) {
+	activeUpdates.add(repo);
+
+	const encoder = new TextEncoder();
+	const stream = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			const write = (chunk: string) => {
+				console.log(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk);
+				controller.enqueue(encoder.encode(chunk));
+			};
+
+			write(`[${new Date().toISOString()}] Updating ${repo}\n`);
+
+			try {
+				await runUpdate(repo, write);
+				write(`[${new Date().toISOString()}] Updated ${repo}\n`);
+				write(`DEPLOY_OK repo=${repo}\n`);
+			} catch (error) {
+				const message = errorMessage(error);
+				write(`[${new Date().toISOString()}] Failed to update ${repo}\n`);
+				write(`${message}\n`);
+				write(`DEPLOY_FAILED repo=${repo}\n`);
+				console.error(error);
+			} finally {
+				activeUpdates.delete(repo);
+				controller.close();
+			}
+		},
+	});
+
+	return new Response(stream, {
+		headers: {
+			'cache-control': 'no-store',
+			'content-type': 'text/plain; charset=utf-8',
+		},
+	});
 }
 
 function repoFromUpdatePath(pathname: string) {

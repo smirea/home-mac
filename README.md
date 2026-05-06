@@ -9,7 +9,8 @@ Control-plane server for this Mac. It exposes `mac.stf.lol` and lets GitHub Acti
 - `GET /` returns `{ "ok": true }`.
 - `POST /update/:repo` requires `Authorization: Bearer <UPDATE_BEARER_KEY>`.
 - Unknown repos fail before deployment work starts. Add supported repos in `src/repoConfig.ts`.
-- Valid updates run `src/setupRepoContainer.ts deploy --repo <repo>` and stream deployment logs to the server console.
+- Valid updates run `src/setupRepoContainer.ts deploy --repo <repo> --defer-router-restart` and stream deployment logs back as `text/plain`.
+- Successful streamed deploys end with `DEPLOY_OK repo=<repo>`. Failed streamed deploys end with `DEPLOY_FAILED repo=<repo>`.
 
 `UPDATE_BEARER_KEY` is defined through env-manager and typed in the generated `src/env.ts`.
 
@@ -50,6 +51,8 @@ The Cloudflare router container reads:
 ```
 
 `192.168.64.1` is the host gateway address from Apple container networking, allowing the `paas-cloudflared` container to reach the Bun server running on the Mac.
+
+Webhook-triggered deploys defer the Cloudflare router restart until after the HTTP response closes. Otherwise the request would be cut off by restarting the same tunnel carrying the response.
 
 ## Repo Containers
 
