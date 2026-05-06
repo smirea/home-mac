@@ -2,6 +2,8 @@
 	"name": "home-mac",
 	"private": true,
 	"scripts": {
+		"start": "bun src/index.ts",
+		"install-service": "bun src/installMacServerLaunchAgent.ts",
 		"lint": "oxlint --fix && oxfmt",
 		"test": "bun test",
 		"dev": "bun --watch src/index.ts"

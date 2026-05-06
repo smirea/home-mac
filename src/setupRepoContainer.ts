@@ -70,6 +70,8 @@ const statePath = path.join(stateDir, 'state.json');
 const cloudflaredConfigPath = path.join(home, '.cloudflared', 'config.yml');
 const defaultDomain = 'stf.lol';
 const defaultTunnelName = 'default';
+const controlPlaneHostname = 'mac.stf.lol';
+const controlPlaneService = 'http://192.168.64.1:3000';
 const cloudflaredImage = 'cloudflare/cloudflared:2026.3.0';
 const pathEntries = [
 	path.join(home, '.bun', 'bin'),
@@ -683,11 +685,16 @@ async function startContainer(containerName: string) {
 
 async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 	const credentialsFileName = path.basename(tunnel.credentialsFile);
+	const controlPlaneRule =
+		tunnel.name === defaultTunnelName
+			? `  - hostname: ${controlPlaneHostname}\n    service: ${controlPlaneService}`
+			: '';
 	const appRules = Object.values(state.apps)
 		.filter(app => appTunnelName(app) === tunnel.name && app.containerIp)
 		.sort((left, right) => left.hostname.localeCompare(right.hostname))
 		.map(app => `  - hostname: ${app.hostname}\n    service: http://${app.containerIp}:${app.containerPort}`)
 		.join('\n');
+	const rules = [controlPlaneRule, appRules].filter(Boolean).join('\n');
 
 	await writeFile(
 		tunnel.configPath,
@@ -695,7 +702,7 @@ async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 credentials-file: /etc/cloudflared-host/${credentialsFileName}
 
 ingress:
-${appRules}
+${rules}
   - service: http_status:404
 `,
 	);
