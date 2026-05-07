@@ -54,11 +54,12 @@ function streamUpdate(
 	activeUpdates.add(repo);
 
 	const encoder = new TextEncoder();
+	let closed = false;
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
 			const write = (chunk: string) => {
 				console.log(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk);
-				controller.enqueue(encoder.encode(chunk));
+				if (!closed) controller.enqueue(encoder.encode(chunk));
 			};
 
 			write(`[${new Date().toISOString()}] Updating ${repo}\n`);
@@ -75,8 +76,14 @@ function streamUpdate(
 				console.error(error);
 			} finally {
 				activeUpdates.delete(repo);
-				controller.close();
+				if (!closed) {
+					closed = true;
+					controller.close();
+				}
 			}
+		},
+		cancel() {
+			closed = true;
 		},
 	});
 

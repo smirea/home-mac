@@ -54,6 +54,8 @@ The Cloudflare router container reads:
 
 Webhook-triggered deploys defer the Cloudflare router restart until after the HTTP response closes. Otherwise the request would be cut off by restarting the same tunnel carrying the response.
 
+GitHub-hosted runners may be challenged by Cloudflare before requests reach the tunnel. The zone needs a targeted security skip/bypass rule for authenticated update requests, for example matching `mac.stf.lol` with path `/update/*`. The Bun server still enforces `UPDATE_BEARER_KEY`; the Cloudflare rule is only to let the request reach that auth check.
+
 ## Repo Containers
 
 `src/setupRepoContainer.ts` deploys configured repos by pulling from GitHub, building an Apple `container` image, starting the app container, refreshing Cloudflare routing, and installing a per-app LaunchAgent.
