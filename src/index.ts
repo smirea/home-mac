@@ -12,7 +12,7 @@ const server = Bun.serve({
 		runUpdate: runSetupRepoContainer,
 	}),
 	hostname: '0.0.0.0',
-	idleTimeout: 600,
+	idleTimeout: 255,
 	port: 3000,
 });
 
