@@ -4,10 +4,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { repoConfig, type RepoConfig } from './repoConfig.ts';
+import { repoConfig, type ContainerConfig, type RepoConfig } from './repoConfig.ts';
 
 type Cli = {
 	command: string;
@@ -163,9 +162,9 @@ async function deploy(cli: Cli) {
 	const image = `local/${containerName}:${commit}`;
 
 	await prepareBuildContext(repoDir, buildContextDir);
-	await writeStartScript(buildContextDir);
-	await writeNginxConfig(buildContextDir);
-	await writeContainerfile(containerfilePath);
+	await writeStartScript(buildContextDir, config.container);
+	await writeNginxConfig(buildContextDir, config.container);
+	await writeContainerfile(containerfilePath, config.container);
 	run('container', ['build', '-f', containerfilePath, '-t', image, buildContextDir]);
 
 	await writeRuntimeEnv(repoDir, runtimeEnvPath, {
@@ -208,7 +207,7 @@ async function deploy(cli: Cli) {
 	await ensureCloudflareDns(hostname, domain, tunnel);
 	await installAppLaunchAgent(name);
 	const routedState = await readState();
-	await verifyApp(routedState.apps[name]);
+	await verifyApp(routedState.apps[name], config.container);
 
 	console.log(`\nDeployed ${name}: https://${hostname}`);
 	console.log(`Cloudflared router container: ${tunnel.containerName}`);
@@ -426,25 +425,30 @@ async function prepareBuildContext(repoDir: string, buildContextDir: string) {
 	if (existsSync(buildContextDir)) run('trash', [buildContextDir]);
 	await mkdir(buildContextDir, { recursive: true });
 
-	const git = spawn('git', ['-C', repoDir, 'archive', '--format=tar', 'HEAD'], {
-		stdio: ['ignore', 'pipe', 'inherit'],
-	});
-	const tar = spawn('tar', ['-xf', '-', '-C', buildContextDir], {
-		stdio: ['pipe', 'inherit', 'inherit'],
-	});
-
-	const gitClosed = once(git, 'close') as Promise<[number]>;
-	const tarClosed = once(tar, 'close') as Promise<[number]>;
-	if (!git.stdout || !tar.stdin) throw new Error('Failed to create archive pipe');
-	git.stdout.pipe(tar.stdin);
-	const [gitStatus] = await gitClosed;
-	const [tarStatus] = await tarClosed;
-
-	if (gitStatus !== 0) throw new Error(`git archive failed with status ${gitStatus}`);
-	if (tarStatus !== 0) throw new Error(`tar extraction failed with status ${tarStatus}`);
+	const archivePath = path.join(path.dirname(buildContextDir), 'source.tar');
+	if (existsSync(archivePath)) run('trash', [archivePath]);
+	run('git', ['-C', repoDir, 'archive', '--format=tar', '--output', archivePath, 'HEAD']);
+	run('tar', ['-xf', archivePath, '-C', buildContextDir]);
+	run('trash', [archivePath]);
 }
 
-async function writeStartScript(buildContextDir: string) {
+async function writeStartScript(buildContextDir: string, container: ContainerConfig) {
+	if (container.type === 'bun-server') {
+		await writeFile(
+			path.join(buildContextDir, 'paas-start.sh'),
+			`#!/usr/bin/env sh
+set -eu
+
+: "\${CLIENT_PORT:?CLIENT_PORT is required}"
+
+mkdir -p /tmp/bun-cache
+exec bun src/index.ts --port "$CLIENT_PORT" --open false
+`,
+			{ mode: 0o755 },
+		);
+		return;
+	}
+
 	await writeFile(
 		path.join(buildContextDir, 'paas-start.sh'),
 		`#!/usr/bin/env sh
@@ -474,7 +478,9 @@ exit "$status"
 	);
 }
 
-async function writeNginxConfig(buildContextDir: string) {
+async function writeNginxConfig(buildContextDir: string, container: ContainerConfig) {
+	if (container.type === 'bun-server') return;
+
 	await writeFile(
 		path.join(buildContextDir, 'paas-nginx.conf'),
 		`pid /tmp/nginx.pid;
@@ -519,7 +525,24 @@ http {
 	);
 }
 
-async function writeContainerfile(containerfilePath: string) {
+async function writeContainerfile(containerfilePath: string, container: ContainerConfig) {
+	if (container.type === 'bun-server') {
+		await writeFile(
+			containerfilePath,
+			`FROM oven/bun:1.3.6-slim
+
+WORKDIR /app
+COPY . .
+RUN bun install --frozen-lockfile
+RUN chmod +x /app/paas-start.sh
+ENV BUN_INSTALL_CACHE_DIR=/tmp/bun-cache
+EXPOSE 3000
+CMD ["/app/paas-start.sh"]
+`,
+		);
+		return;
+	}
+
 	await writeFile(
 		containerfilePath,
 		`FROM oven/bun:1.3.6-slim
@@ -907,7 +930,7 @@ async function stopHostRouter() {
 	run('trash', [plist], { allowFailure: true });
 }
 
-async function verifyApp(app: AppState) {
+async function verifyApp(app: AppState, container: ContainerConfig) {
 	if (!app.containerIp) throw new Error(`Missing container IP for ${app.name}`);
 	run('curl', [
 		'--fail',
@@ -915,7 +938,7 @@ async function verifyApp(app: AppState) {
 		'--show-error',
 		'--noproxy',
 		'*',
-		`http://${app.containerIp}:${app.containerPort}/api/status`,
+		`http://${app.containerIp}:${app.containerPort}${container.healthPath}`,
 	]);
 	const external = await fetchWithTimeout(`https://${app.hostname}`, { timeoutMs: 8000 });
 	if (!external.ok) {
