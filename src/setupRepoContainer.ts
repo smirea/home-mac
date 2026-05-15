@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -293,8 +293,15 @@ function ensureCommand(command: string) {
 }
 
 function which(command: string) {
-	const result = spawnSync('which', [command], { encoding: 'utf8' });
-	return result.status === 0 ? result.stdout.trim() : '';
+	const paths = (process.env.PATH ?? '').split(':').filter(Boolean);
+	for (const directory of paths) {
+		const candidate = path.join(directory, command);
+		try {
+			accessSync(candidate, constants.X_OK);
+			return candidate;
+		} catch {}
+	}
+	return '';
 }
 
 async function resolveRepoInfo(repo: string) {
