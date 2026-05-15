@@ -344,19 +344,12 @@ async function ensureRepoCheckout(repoFullName: string, branch: string) {
 }
 
 async function runEnvManager(repoDir: string, name: string) {
-	if (!which('env-manager')) return;
 	const hasEnvSchema = existsSync(path.join(repoDir, '.env'));
 	const hasLocalEnv = existsSync(path.join(repoDir, '.env.local'));
 	if (!hasEnvSchema && !hasLocalEnv) return;
 
-	const result = run('env-manager', ['down'], {
-		cwd: repoDir,
-		allowFailure: true,
-		capture: true,
-	});
-	if (result.status !== 0) {
-		console.warn(`env-manager down failed for ${name}; continuing with local env files.`);
-	}
+	if (!which('env-manager')) throw new Error(`${name} needs env-manager, but env-manager is not installed`);
+	run('env-manager', ['down'], { cwd: repoDir });
 }
 
 async function runProjectChecks(repoDir: string, cli: Cli, config: RepoConfig) {
