@@ -583,13 +583,19 @@ async function readEnvFile(filePath: string) {
 		const eqIndex = trimmed.indexOf('=');
 		if (eqIndex === -1) continue;
 		const key = trimmed.slice(0, eqIndex).trim();
-		let value = trimmed.slice(eqIndex + 1).trim();
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-			value = value.slice(1, -1);
-		}
-		env[key] = value;
+		env[key] = parseEnvValue(trimmed.slice(eqIndex + 1));
 	}
 	return env;
+}
+
+function parseEnvValue(raw: string) {
+	const value = raw.trim();
+	const quote = value[0];
+	if (quote === '"' || quote === "'") {
+		const end = value.indexOf(quote, 1);
+		if (end !== -1) return value.slice(1, end);
+	}
+	return value.replace(/\s+#.*$/, '').trim();
 }
 
 function quoteEnv(value: string) {
