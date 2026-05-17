@@ -176,6 +176,7 @@ async function deploy(cli: Cli) {
 		GAMES_DIR: '/data/games',
 		BUN_INSTALL_CACHE_DIR: '/tmp/bun-cache',
 		NODE_ENV: 'production',
+		...config.runtimeEnv,
 		...envOptions(cli),
 	});
 

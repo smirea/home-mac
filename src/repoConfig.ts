@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 
 export type RepoConfig = {
 	subdomain: string;
+	runtimeEnv?: Record<string, string>;
 	container: ContainerConfig;
 	setup: () => Promise<void>;
 	start: () => Promise<void>;
@@ -20,6 +21,7 @@ export type ContainerConfig =
 
 type NodeClientServerOptions = {
 	subdomain: string;
+	runtimeEnv?: Record<string, string>;
 	setupCommand?: string[];
 	startCommand?: string[];
 	stopCommand?: string[];
@@ -27,12 +29,14 @@ type NodeClientServerOptions = {
 
 export function nodeClientServer({
 	subdomain,
+	runtimeEnv,
 	setupCommand = ['bun', 'install'],
 	startCommand = ['bun', 'dev'],
 	stopCommand,
 }: NodeClientServerOptions): RepoConfig {
 	return {
 		subdomain,
+		runtimeEnv,
 		container: {
 			type: 'node-client-server',
 			healthPath: '/api/status',
@@ -59,6 +63,12 @@ export function bunServer({ subdomain }: { subdomain: string }): RepoConfig {
 export const repoConfig: Record<string, RepoConfig> = {
 	decideroo: nodeClientServer({
 		subdomain: 'decideroo',
+	}),
+	hanabi: nodeClientServer({
+		subdomain: 'hanabi',
+		runtimeEnv: {
+			DATABASE_URL: '/data/hanabi.sqlite',
+		},
 	}),
 	'travel-surfing-planner': bunServer({
 		subdomain: 'surf-in-september',
