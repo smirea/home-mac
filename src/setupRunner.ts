@@ -29,9 +29,13 @@ export async function runSetupRepoContainer(repo: string, writeLog: (chunk: stri
 		const routerArgs = [setupScriptPath, 'refresh-router', '--name', repo];
 		console.log(`$ ${[process.execPath, ...routerArgs].join(' ')}`);
 		const router = spawn(process.execPath, routerArgs, {
-			detached: true,
-			stdio: 'ignore',
+			stdio: ['ignore', 'pipe', 'pipe'],
 		});
-		router.unref();
+		router.stdout?.on('data', chunk => console.log(String(chunk).trimEnd()));
+		router.stderr?.on('data', chunk => console.error(String(chunk).trimEnd()));
+		router.once('error', error => console.error(error));
+		router.once('close', status => {
+			if (status !== 0) console.error(`refresh-router failed for ${repo} with status ${status}`);
+		});
 	}, 1000);
 }
