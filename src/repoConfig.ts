@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
 export type RepoConfig = {
 	subdomain: string;
 	runtimeEnv?: Record<string, string>;
+	dataDir?: (repoDir: string) => string;
 	container: ContainerConfig;
 	setup: () => Promise<void>;
 	start: () => Promise<void>;
@@ -22,6 +24,8 @@ export type ContainerConfig =
 type NodeClientServerOptions = {
 	subdomain: string;
 	runtimeEnv?: Record<string, string>;
+	dataDir?: (repoDir: string) => string;
+	healthPath?: string;
 	setupCommand?: string[];
 	startCommand?: string[];
 	stopCommand?: string[];
@@ -30,6 +34,8 @@ type NodeClientServerOptions = {
 export function nodeClientServer({
 	subdomain,
 	runtimeEnv,
+	dataDir,
+	healthPath = '/api/status',
 	setupCommand = ['bun', 'install'],
 	startCommand = ['bun', 'dev'],
 	stopCommand,
@@ -37,9 +43,10 @@ export function nodeClientServer({
 	return {
 		subdomain,
 		runtimeEnv,
+		dataDir,
 		container: {
 			type: 'node-client-server',
-			healthPath: '/api/status',
+			healthPath,
 		},
 		setup: () => run(setupCommand),
 		start: () => run(startCommand),
@@ -68,6 +75,15 @@ export const repoConfig: Record<string, RepoConfig> = {
 		subdomain: 'hanabi',
 		runtimeEnv: {
 			DATABASE_URL: '/data/hanabi.sqlite',
+		},
+	}),
+	vitals: nodeClientServer({
+		subdomain: 'vitals',
+		healthPath: '/',
+		dataDir: repoDir => path.join(repoDir, 'data'),
+		runtimeEnv: {
+			VITALS_DATA_DIR: '/data',
+			VITALS_DB_PATH: '/data/vitals.sqlite',
 		},
 	}),
 	'travel-surfing-planner': bunServer({

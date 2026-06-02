@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -155,10 +155,10 @@ async function deploy(cli: Cli) {
 	const tunnel = await resolveTunnelState(cli, tunnelName);
 
 	await mkdir(appDir, { recursive: true });
-	await mkdir(appDataDir, { recursive: true });
 
 	const repoInfo = await resolveRepoInfo(repo.spec);
 	const repoDir = await ensureRepoCheckout(repoInfo.nameWithOwner, repoInfo.defaultBranchRef.name);
+	const dataDir = config.dataDir ? await ensureLinkedAppDataDir(appDataDir, config.dataDir(repoDir)) : appDataDir;
 	await runEnvManager(repoDir, name);
 	await runProjectChecks(repoDir, cli, config);
 
@@ -166,17 +166,11 @@ async function deploy(cli: Cli) {
 		capture: true,
 	}).stdout.trim();
 	const image = `local/${containerName}:${commit}`;
-
-	await prepareBuildContext(repoDir, buildContextDir);
-	await writeStartScript(buildContextDir, config.container);
-	await writeNginxConfig(buildContextDir, config.container);
-	await writeContainerfile(containerfilePath, config.container);
-	run('container', ['build', '-f', containerfilePath, '-t', image, buildContextDir]);
-
-	await writeRuntimeEnv(repoDir, runtimeEnvPath, {
+	const requiredEnv = {
 		API_PORT: String(apiPort),
 		CLIENT_PORT: String(containerPort),
-		VITE_API_URL: `http://127.0.0.1:${apiPort}`,
+		VITE_HOST: hostname,
+		VITE_API_URL: `https://${hostname}/api`,
 		CLIENT_HOST: hostname,
 		DATA_DIR: '/data',
 		GAMES_DIR: '/data/games',
@@ -184,7 +178,15 @@ async function deploy(cli: Cli) {
 		NODE_ENV: 'production',
 		...config.runtimeEnv,
 		...envOptions(cli),
-	});
+	};
+
+	await prepareBuildContext(repoDir, buildContextDir);
+	await writeStartScript(buildContextDir, config.container);
+	await writeNginxConfig(buildContextDir, config.container);
+	await writeContainerfile(containerfilePath, config.container, requiredEnv);
+	run('container', ['build', '-f', containerfilePath, '-t', image, buildContextDir]);
+
+	await writeRuntimeEnv(repoDir, runtimeEnvPath, requiredEnv);
 
 	const state = await readState();
 	state.tunnels[tunnelName] = tunnel;
@@ -193,7 +195,7 @@ async function deploy(cli: Cli) {
 		repo: repo.spec,
 		repoFullName: repoInfo.nameWithOwner,
 		repoDir,
-		dataDir: appDataDir,
+		dataDir,
 		domain,
 		hostname,
 		tunnelName,
@@ -374,6 +376,34 @@ async function ensureRepoCheckout(repoFullName: string, branch: string) {
 	return repoDir;
 }
 
+async function ensureLinkedAppDataDir(linkPath: string, targetPath: string) {
+	const resolvedLinkPath = path.resolve(linkPath);
+	const resolvedTargetPath = path.resolve(targetPath);
+	await mkdir(path.dirname(resolvedLinkPath), { recursive: true });
+	await mkdir(resolvedTargetPath, { recursive: true });
+
+	if (resolvedLinkPath === resolvedTargetPath) return resolvedLinkPath;
+
+	const existing = await lstat(resolvedLinkPath).catch(error => {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	});
+	if (!existing) {
+		await symlink(resolvedTargetPath, resolvedLinkPath, 'dir');
+		return resolvedLinkPath;
+	}
+	if (!existing.isSymbolicLink()) {
+		throw new Error(`${resolvedLinkPath} already exists and is not a symlink; move it before deploying this repo`);
+	}
+
+	const currentTarget = path.resolve(path.dirname(resolvedLinkPath), await readlink(resolvedLinkPath));
+	if (currentTarget === resolvedTargetPath) return resolvedLinkPath;
+
+	run('trash', [resolvedLinkPath]);
+	await symlink(resolvedTargetPath, resolvedLinkPath, 'dir');
+	return resolvedLinkPath;
+}
+
 async function runEnvManager(repoDir: string, name: string) {
 	const hasEnvSchema = existsSync(path.join(repoDir, '.env'));
 	const hasLocalEnv = existsSync(path.join(repoDir, '.env.local'));
@@ -521,6 +551,11 @@ http {
 	uwsgi_temp_path /tmp/nginx-uwsgi;
 	scgi_temp_path /tmp/nginx-scgi;
 
+	map $http_upgrade $connection_upgrade {
+		default upgrade;
+		'' '';
+	}
+
 	server {
 		listen 0.0.0.0:3000;
 		root /app/client/dist;
@@ -535,7 +570,8 @@ http {
 			proxy_set_header Host $host;
 			proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 			proxy_set_header X-Forwarded-Proto $scheme;
-			proxy_set_header Connection "";
+			proxy_set_header Upgrade $http_upgrade;
+			proxy_set_header Connection $connection_upgrade;
 		}
 
 		location /api/ {
@@ -547,7 +583,8 @@ http {
 			proxy_set_header Host $host;
 			proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 			proxy_set_header X-Forwarded-Proto $scheme;
-			proxy_set_header Connection "";
+			proxy_set_header Upgrade $http_upgrade;
+			proxy_set_header Connection $connection_upgrade;
 		}
 
 		location / {
@@ -559,7 +596,11 @@ http {
 	);
 }
 
-async function writeContainerfile(containerfilePath: string, container: ContainerConfig) {
+async function writeContainerfile(
+	containerfilePath: string,
+	container: ContainerConfig,
+	buildEnv: Record<string, string>,
+) {
 	if (container.type === 'bun-server') {
 		await writeFile(
 			containerfilePath,
@@ -585,7 +626,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends nginx-light
 COPY . .
 RUN bun install --frozen-lockfile
-RUN cd client && CLIENT_PORT=3000 CLIENT_HOST=localhost VITE_API_URL=http://127.0.0.1:3001 bunx --bun vite build
+RUN cd client && CLIENT_PORT=${quoteEnv(buildEnv.CLIENT_PORT)} CLIENT_HOST=${quoteEnv(buildEnv.CLIENT_HOST)} VITE_HOST=${quoteEnv(buildEnv.VITE_HOST)} VITE_API_URL=${quoteEnv(buildEnv.VITE_API_URL)} bunx --bun vite build
 RUN chmod +x /app/paas-start.sh
 ENV BUN_INSTALL_CACHE_DIR=/tmp/bun-cache
 EXPOSE 3000
