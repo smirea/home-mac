@@ -608,6 +608,7 @@ async function writeContainerfile(
 
 WORKDIR /app
 COPY . .
+RUN bun -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (pkg.scripts) delete pkg.scripts.prepare; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 RUN bun install --frozen-lockfile
 RUN chmod +x /app/paas-start.sh
 ENV BUN_INSTALL_CACHE_DIR=/tmp/bun-cache
@@ -625,6 +626,7 @@ CMD ["/app/paas-start.sh"]
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends nginx-light python3 make g++
 COPY . .
+RUN bun -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (pkg.scripts) delete pkg.scripts.prepare; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 RUN bun install --frozen-lockfile
 RUN cd client && CLIENT_PORT=${quoteEnv(buildEnv.CLIENT_PORT)} CLIENT_HOST=${quoteEnv(buildEnv.CLIENT_HOST)} VITE_HOST=${quoteEnv(buildEnv.VITE_HOST)} VITE_API_URL=${quoteEnv(buildEnv.VITE_API_URL)} bunx --bun vite build
 RUN chmod +x /app/paas-start.sh
