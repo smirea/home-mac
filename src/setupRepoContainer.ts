@@ -57,6 +57,10 @@ type ContainerListEntry = {
 	networks?: Array<{ ipv4Address?: string }>;
 };
 
+type ImageListEntry = {
+	reference?: string;
+};
+
 const home = homedir();
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(scriptPath);
@@ -93,6 +97,8 @@ if (cli.command === 'deploy') {
 	await startFromCli(cli);
 } else if (cli.command === 'refresh-router') {
 	await refreshRouterFromCli(cli);
+} else if (cli.command === 'cleanup') {
+	await cleanupFromCli(cli);
 } else if (cli.command === 'status') {
 	await status();
 } else {
@@ -118,7 +124,7 @@ function parseCli(argv: string[]): Cli {
 		options.set(key, [...(options.get(key) ?? []), value]);
 	}
 
-	const commands = new Set(['deploy', 'start', 'refresh-router', 'status']);
+	const commands = new Set(['deploy', 'start', 'refresh-router', 'cleanup', 'status']);
 	const command = options.has('status') ? 'status' : commands.has(positionals[0]) ? positionals.shift()! : 'deploy';
 	return { command, positionals, options };
 }
@@ -209,6 +215,7 @@ async function deploy(cli: Cli) {
 	await installAppLaunchAgent(name);
 	const routedState = await readState();
 	await verifyApp(routedState.apps[name], config.container);
+	pruneUnusedRepoImages();
 
 	console.log(`\nDeployed ${name}: https://${hostname}`);
 	console.log(`Cloudflared router container: ${tunnel.containerName}`);
@@ -231,6 +238,20 @@ async function refreshRouterFromCli(cli: Cli) {
 	const name = sanitizeName(option(cli, 'name') ?? cli.positionals[0] ?? 'decideroo');
 	requireRepoConfig(name);
 	await refreshContainerRoute(name, true);
+}
+
+async function cleanupFromCli(cli: Cli) {
+	await ensureBaseDirs();
+	ensureCommand('container');
+	await ensureContainerRuntime();
+
+	const deletedImages = pruneUnusedRepoImages();
+	if (option(cli, 'skip-builder') !== 'true') {
+		run('container', ['builder', 'delete', '--force'], { allowFailure: true });
+		console.log('Deleted builder cache container');
+	}
+
+	console.log(`Deleted ${deletedImages} unused repo image${deletedImages === 1 ? '' : 's'}`);
 }
 
 async function status() {
@@ -719,6 +740,35 @@ function readContainers(): ContainerListEntry[] {
 		throw new Error(`container list failed\n${result.stderr ?? ''}`);
 	}
 	return JSON.parse(result.stdout || '[]') as ContainerListEntry[];
+}
+
+function readImages(): ImageListEntry[] {
+	const result = spawnSync('container', ['image', 'list', '--format', 'json'], {
+		encoding: 'utf8',
+		maxBuffer: 1024 * 1024 * 50,
+	});
+	if (result.status !== 0) {
+		throw new Error(`container image list failed\n${result.stderr ?? ''}`);
+	}
+	return JSON.parse(result.stdout || '[]') as ImageListEntry[];
+}
+
+function pruneUnusedRepoImages() {
+	const referencedImages = new Set(
+		readContainers()
+			.map(container => container.configuration?.image?.reference)
+			.filter((reference): reference is string => Boolean(reference)),
+	);
+	const staleImages = readImages()
+		.map(image => image.reference)
+		.filter((reference): reference is string => Boolean(reference))
+		.filter(reference => reference.startsWith('local/paas-') && !referencedImages.has(reference));
+
+	for (const image of staleImages) {
+		run('container', ['image', 'delete', image], { allowFailure: true });
+	}
+
+	return staleImages.length;
 }
 
 async function startContainer(containerName: string) {
