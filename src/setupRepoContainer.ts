@@ -623,7 +623,7 @@ CMD ["/app/paas-start.sh"]
 		`FROM oven/bun:1.3.6-slim
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends nginx-light
+RUN apt-get update && apt-get install -y --no-install-recommends nginx-light python3 make g++
 COPY . .
 RUN bun install --frozen-lockfile
 RUN cd client && CLIENT_PORT=${quoteEnv(buildEnv.CLIENT_PORT)} CLIENT_HOST=${quoteEnv(buildEnv.CLIENT_HOST)} VITE_HOST=${quoteEnv(buildEnv.VITE_HOST)} VITE_API_URL=${quoteEnv(buildEnv.VITE_API_URL)} bunx --bun vite build
