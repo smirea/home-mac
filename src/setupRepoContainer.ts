@@ -366,6 +366,20 @@ async function ensureRepoCheckout(repoFullName: string, branch: string) {
 	const repoDir = path.join(codeDir, repoName);
 	if (existsSync(path.join(repoDir, '.git'))) {
 		run('git', ['-C', repoDir, 'fetch', 'origin', branch]);
+		const dirty = run('git', ['-C', repoDir, 'status', '--porcelain'], { capture: true }).stdout.trim();
+		if (dirty) {
+			const currentBranch = run('git', ['-C', repoDir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+				capture: true,
+			}).stdout.trim();
+			const head = run('git', ['-C', repoDir, 'rev-parse', 'HEAD'], { capture: true }).stdout.trim();
+			const remote = run('git', ['-C', repoDir, 'rev-parse', `origin/${branch}`], {
+				capture: true,
+			}).stdout.trim();
+			if (currentBranch === branch && head === remote) return repoDir;
+			throw new Error(
+				`${repoDir} has uncommitted changes and is not at origin/${branch}; commit or stash before deploying`,
+			);
+		}
 		run('git', ['-C', repoDir, 'checkout', branch]);
 		run('git', ['-C', repoDir, 'pull', '--ff-only', 'origin', branch]);
 		return repoDir;
