@@ -246,9 +246,11 @@ async function cleanupFromCli(cli: Cli) {
 	await ensureContainerRuntime();
 
 	const deletedImages = pruneUnusedRepoImages();
-	if (option(cli, 'skip-builder') !== 'true') {
+	if (option(cli, 'builder') === 'true' && option(cli, 'skip-builder') !== 'true') {
 		run('container', ['builder', 'delete', '--force'], { allowFailure: true });
 		console.log('Deleted builder cache container');
+	} else {
+		console.log('Kept builder cache; pass --builder to delete it');
 	}
 
 	console.log(`Deleted ${deletedImages} unused repo image${deletedImages === 1 ? '' : 's'}`);
