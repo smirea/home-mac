@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { repoConfig } from './repoConfig.ts';
+import { createGithubMiddleware } from './github.ts';
 
 type ServerOptions = {
 	bearerKey: string;
@@ -14,23 +15,23 @@ export function createFetchHandler({
 }: ServerOptions): (request: Request) => Promise<Response> | Response {
 	const activeUpdates = new Set<string>();
 
-	return async request => {
-		const url = new URL(request.url);
+	return async req => {
+		const url = new URL(req.url);
 
-		if (url.pathname === '/') {
-			return json({ ok: true });
+		if (url.pathname === '/') return json({ ok: true });
+
+		if (req.method === 'POST' && url.pathname.startsWith('/git-webhook/')) {
+			return createGithubMiddleware({ path: '/git-webhook/' })(req);
 		}
 
 		const repo = repoFromUpdatePath(url.pathname);
-		if (!repo) {
-			return json({ error: 'Not found', ok: false }, 404);
-		}
+		if (!repo) return json({ error: 'Not found', ok: false }, 404);
 
-		if (request.method !== 'POST') {
+		if (req.method !== 'POST') {
 			return json({ error: 'Use POST for updates', ok: false }, 405, { allow: 'POST' });
 		}
 
-		if (!isAuthorized(request, bearerKey)) {
+		if (!isAuthorized(req, bearerKey)) {
 			return json({ error: 'Unauthorized', ok: false }, 401, { 'www-authenticate': 'Bearer' });
 		}
 

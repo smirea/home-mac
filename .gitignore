@@ -1,6 +1,7 @@
 node_modules
 
 # output
+workdir
 out
 dist
 *.tgz
@@ -10,6 +11,7 @@ dist
 .env.test.local
 .env.production.local
 .env.local
+github-app-key.pem
 
 # caches
 .eslintcache

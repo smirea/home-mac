@@ -1,4 +1,8 @@
 {
 	"folders": [{ "path": "." }],
-	"settings": {},
+	"settings": {
+		"files.exclude": {
+			"workdir": true,
+		},
+	},
 }
