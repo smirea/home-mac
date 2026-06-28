@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, rename, symlink, writeFile } from 'node:fs/promises';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -1141,7 +1141,9 @@ ${options.keepAlive ? '\t<key>KeepAlive</key>\n\t<true/>\n' : ''}${options.start
 
 async function readState(): Promise<State> {
 	if (!existsSync(statePath)) return { apps: {}, tunnels: {} };
-	const parsed = JSON.parse(await readFile(statePath, 'utf8')) as {
+	let raw = await readFile(statePath, 'utf8');
+	while (raw.endsWith('\u0000')) raw = raw.slice(0, -1);
+	const parsed = JSON.parse(raw) as {
 		apps?: Record<string, Partial<AppState>>;
 		tunnels?: Record<string, TunnelState>;
 	};
@@ -1158,7 +1160,9 @@ async function readState(): Promise<State> {
 }
 
 async function writeState(state: State) {
-	await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+	const tempPath = `${statePath}.${process.pid}.tmp`;
+	await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`);
+	await rename(tempPath, statePath);
 }
 
 function option(cli: Cli, key: string) {
