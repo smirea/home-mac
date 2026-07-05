@@ -113,7 +113,7 @@ type CodexExecEvent =
 			item: { id: string; type: string; [k: string]: unknown };
 	  };
 
-async function fixIssue({ repoFullName, issue }: { repoFullName: string; issue: string }) {
+export async function fixIssue({ repoFullName, issue }: { repoFullName: string; issue: string }) {
 	const workdir = path.join(workdirRoot, repoFullName.split('/').pop()!);
 	const repoDir = path.join(workdir, issue);
 	// share 1 codex home to have shared memory for all issues
