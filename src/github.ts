@@ -41,10 +41,24 @@ export function createGithubMiddleware(opts: { path: string }) {
 
 	webhooks.on(['issues.opened', 'issues.edited', 'issue_comment'], async event => {
 		const { issue, repository, sender } = event.payload;
+		const action = 'action' in event.payload ? event.payload.action : 'unknown';
+		const target = `${repository.full_name}#${issue.number}`;
+
+		console.log(chalk.bold('github webhook:'), event.name, action, target, chalk.bold('sender:'), sender.login);
 
 		if (!repository.full_name.startsWith('smirea/')) throw new Error('oh noes');
-		if (!whitelist.has(repository.name)) return console.warn(chalk.yellow('not whitelisted:', repository.full_name));
-		if (sender.login === 'smirea-ai') return;
+		if (!whitelist.has(repository.name)) {
+			console.warn(chalk.yellow('github webhook skipped: not whitelisted'), repository.full_name);
+			return;
+		}
+		if (event.name === 'issue_comment' && !['created', 'edited'].includes(action)) {
+			console.warn(chalk.yellow('github webhook skipped: unsupported comment action'), action, target);
+			return;
+		}
+		if (event.name === 'issue_comment' && sender.login === 'smirea-ai') {
+			console.warn(chalk.yellow('github webhook skipped: smirea-ai comment loop guard'), target);
+			return;
+		}
 
 		const collaborators = await getCollaborators(repository.full_name);
 		if (!collaborators.find(x => x.login === sender.login)) throw new Error('nuh huh');
