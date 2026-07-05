@@ -294,6 +294,7 @@ there is a \`env-manager\` utility that can be used to load and save environment
 4. implement the request and validate it's working by running the application and interacting with the request
 4.1. If the feature has checkboxes as todo-list, consider creating 1 commit per checkbox and ticking each checkbox as it's completed
 5. Once completed and validate commit your changes with \`git ci\` and mention "Fixes #issueNumber" in the commit message such that the branch is linked to the issue automatically.
+5.1. Post a messge on the original issue thread with brief overview of the solution and include one or more screenshots of the relevant changes (for UI/UX changes)
 6. Create a pull request for the branch, wait for the build to complete, fix if needed and merge via rebase once all checks are green (or if there are no checks). Once pull request is merged, delete the remote branch
 
 # Resources
