@@ -176,7 +176,7 @@ async function deploy(cli: Cli) {
 		GAMES_DIR: '/data/games',
 		BUN_INSTALL_CACHE_DIR: '/tmp/bun-cache',
 		NODE_ENV: 'production',
-		...config.runtimeEnv,
+		...resolveRuntimeEnv(config, { hostname, containerPort, apiPort }),
 		...envOptions(cli),
 	};
 
@@ -361,6 +361,11 @@ function requireRepoConfig(repoName: string) {
 	);
 }
 
+function resolveRuntimeEnv(config: RepoConfig, context: { hostname: string; containerPort: number; apiPort: number }) {
+	if (!config.runtimeEnv) return {};
+	return typeof config.runtimeEnv === 'function' ? config.runtimeEnv(context) : config.runtimeEnv;
+}
+
 async function ensureRepoCheckout(repoFullName: string, branch: string) {
 	const repoName = repoFullName.split('/')[1];
 	const repoDir = path.join(codeDir, repoName);
@@ -517,6 +522,22 @@ exec bun src/index.ts --port "$CLIENT_PORT" --open false
 		return;
 	}
 
+	if (container.type === 'bun-workspace-server') {
+		await writeFile(
+			path.join(buildContextDir, 'paas-start.sh'),
+			`#!/usr/bin/env sh
+set -eu
+
+: "\${PORT:?PORT is required}"
+
+mkdir -p /tmp/bun-cache
+exec ${shellCommand(container.startCommand)}
+`,
+			{ mode: 0o755 },
+		);
+		return;
+	}
+
 	await writeFile(
 		path.join(buildContextDir, 'paas-start.sh'),
 		`#!/usr/bin/env sh
@@ -547,7 +568,7 @@ exit "$status"
 }
 
 async function writeNginxConfig(buildContextDir: string, container: ContainerConfig) {
-	if (container.type === 'bun-server') return;
+	if (container.type !== 'node-client-server') return;
 
 	await writeFile(
 		path.join(buildContextDir, 'paas-nginx.conf'),
@@ -633,6 +654,27 @@ CMD ["/app/paas-start.sh"]
 		return;
 	}
 
+	if (container.type === 'bun-workspace-server') {
+		const buildEnvPrefix = envAssignments(buildEnv, container.buildEnvKeys);
+		await writeFile(
+			containerfilePath,
+			`FROM oven/bun:1.3.6-slim
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++
+COPY . .
+RUN bun -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (pkg.scripts) delete pkg.scripts.prepare; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+RUN bun install --frozen-lockfile
+RUN ${buildEnvPrefix ? `${buildEnvPrefix} ` : ''}${shellCommand(container.buildCommand)}
+RUN chmod +x /app/paas-start.sh
+ENV BUN_INSTALL_CACHE_DIR=/tmp/bun-cache
+EXPOSE 3000
+CMD ["/app/paas-start.sh"]
+`,
+		);
+		return;
+	}
+
 	await writeFile(
 		containerfilePath,
 		`FROM oven/bun:1.3.6-slim
@@ -692,6 +734,26 @@ function parseEnvValue(raw: string) {
 function quoteEnv(value: string) {
 	if (/^[A-Za-z0-9_./:@-]*$/.test(value)) return value;
 	return JSON.stringify(value);
+}
+
+function envAssignments(env: Record<string, string>, keys: string[]) {
+	return keys
+		.map(key => {
+			const value = env[key];
+			return value === undefined ? '' : `${key}=${quoteEnv(value)}`;
+		})
+		.filter(Boolean)
+		.join(' ');
+}
+
+function shellCommand(command: string[]) {
+	if (!command.length) throw new Error('Command must not be empty');
+	return command.map(shellArg).join(' ');
+}
+
+function shellArg(value: string) {
+	if (/^[A-Za-z0-9_./:@=-]+$/.test(value)) return value;
+	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function envOptions(cli: Cli) {
@@ -1064,7 +1126,7 @@ async function verifyApp(app: AppState, container: ContainerConfig) {
 		'--show-error',
 		'--noproxy',
 		'*',
-		`http://${app.containerIp}:${app.containerPort}${container.healthPath}`,
+		`http://127.0.0.1:${app.hostPort}${container.healthPath}`,
 	]);
 	const external = await fetchWithTimeout(`https://${app.hostname}`, { timeoutMs: 8000 });
 	if (!external.ok) {

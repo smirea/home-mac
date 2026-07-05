@@ -3,13 +3,21 @@ import path from 'node:path';
 
 export type RepoConfig = {
 	subdomain: string;
-	runtimeEnv?: Record<string, string>;
+	runtimeEnv?: RepoRuntimeEnv;
 	dataDir?: (repoDir: string) => string;
 	container: ContainerConfig;
 	setup: () => Promise<void>;
 	start: () => Promise<void>;
 	stop: () => Promise<void>;
 };
+
+export type RepoEnvContext = {
+	hostname: string;
+	containerPort: number;
+	apiPort: number;
+};
+
+export type RepoRuntimeEnv = Record<string, string> | ((context: RepoEnvContext) => Record<string, string>);
 
 export type ContainerConfig =
 	| {
@@ -19,11 +27,18 @@ export type ContainerConfig =
 	| {
 			type: 'bun-server';
 			healthPath: string;
+	  }
+	| {
+			type: 'bun-workspace-server';
+			healthPath: string;
+			buildCommand: string[];
+			startCommand: string[];
+			buildEnvKeys: string[];
 	  };
 
 type NodeClientServerOptions = {
 	subdomain: string;
-	runtimeEnv?: Record<string, string>;
+	runtimeEnv?: RepoRuntimeEnv;
 	dataDir?: (repoDir: string) => string;
 	healthPath?: string;
 	setupCommand?: string[];
@@ -51,6 +66,44 @@ export function nodeClientServer({
 		setup: () => run(setupCommand),
 		start: () => run(startCommand),
 		stop: () => (stopCommand ? run(stopCommand) : Promise.resolve()),
+	};
+}
+
+type BunWorkspaceServerOptions = {
+	subdomain: string;
+	runtimeEnv?: RepoRuntimeEnv;
+	dataDir?: (repoDir: string) => string;
+	healthPath?: string;
+	setupCommand?: string[];
+	buildCommand?: string[];
+	startCommand?: string[];
+	buildEnvKeys?: string[];
+};
+
+export function bunWorkspaceServer({
+	subdomain,
+	runtimeEnv,
+	dataDir,
+	healthPath = '/',
+	setupCommand = ['bun', 'install'],
+	buildCommand = ['bun', 'run', 'build'],
+	startCommand = ['bun', 'run', 'start'],
+	buildEnvKeys = [],
+}: BunWorkspaceServerOptions): RepoConfig {
+	return {
+		subdomain,
+		runtimeEnv,
+		dataDir,
+		container: {
+			type: 'bun-workspace-server',
+			healthPath,
+			buildCommand,
+			startCommand,
+			buildEnvKeys,
+		},
+		setup: () => run(setupCommand),
+		start: () => run(startCommand),
+		stop: () => Promise.resolve(),
 	};
 }
 
@@ -88,6 +141,17 @@ export const repoConfig: Record<string, RepoConfig> = {
 	}),
 	'travel-surfing-planner': bunServer({
 		subdomain: 'surf-in-september',
+	}),
+	'phantom-ink': bunWorkspaceServer({
+		subdomain: 'phantom-ink',
+		buildEnvKeys: ['PORT', 'UI_PORT', 'UI_URL', 'SERVER_URL'],
+		runtimeEnv: ({ hostname, containerPort }) => ({
+			DATABASE_URL: '/data/phantom-ink.sqlite',
+			PORT: String(containerPort),
+			SERVER_URL: `https://${hostname}`,
+			UI_PORT: String(containerPort),
+			UI_URL: `https://${hostname}`,
+		}),
 	}),
 };
 
