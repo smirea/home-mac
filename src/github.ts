@@ -33,7 +33,7 @@ const threads = {
 };
 
 export function createGithubMiddleware(opts: { path: string }) {
-	const webhooks = new Webhooks({ secret: env.UPDATE_BEARER_KEY });
+	const webhooks = new Webhooks({ secret: env.GITHUB_APP_KEY });
 
 	webhooks.onError(error => {
 		console.error('webhook error:', error.message);

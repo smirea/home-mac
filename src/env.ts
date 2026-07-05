@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 const env = z
 	.object({
+		GITHUB_APP_KEY: z.string(),
 		UPDATE_BEARER_KEY: z.string(),
 	})
 	.parse(process.env);
