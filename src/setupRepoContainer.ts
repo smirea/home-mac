@@ -71,6 +71,7 @@ const logsDir = path.join(home, 'Library', 'Logs', 'repo-containers');
 const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
 const statePath = path.join(stateDir, 'state.json');
 const cloudflaredConfigPath = path.join(home, '.cloudflared', 'config.yml');
+const defaultGithubOwner = 'smirea';
 const defaultDomain = 'stf.lol';
 const defaultTunnelName = 'default';
 const controlPlaneHostname = 'mac.stf.lol';
@@ -345,7 +346,8 @@ function resolveRepo(repoArg: string) {
 		.split('/')
 		.at(-1)!
 		.replace(/\.git$/, '');
-	return { spec: repoArg, name: repoName };
+	const spec = repoArg.includes('/') ? repoArg : `${defaultGithubOwner}/${repoName}`;
+	return { spec, name: repoName };
 }
 
 function requireRepoConfig(repoName: string) {
