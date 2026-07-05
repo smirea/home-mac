@@ -27,5 +27,6 @@
 		"paths": {
 			"shared/*": ["./shared/*"]
 		}
-	}
+	},
+	"exclude": ["workdir"]
 }

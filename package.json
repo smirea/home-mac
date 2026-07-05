@@ -5,7 +5,7 @@
 		"start": "bun src/index.ts",
 		"install-service": "bun src/installMacServerLaunchAgent.ts",
 		"lint": "oxlint --fix && oxfmt",
-		"test": "bun test",
+		"test": "files=$(git ls-files 'src/**/*.test.ts' 'src/**/*.test.tsx' 'src/**/*.spec.ts' 'src/**/*.spec.tsx' 'scripts/**/*.test.ts' 'scripts/**/*.test.tsx' 'scripts/**/*.spec.ts' 'scripts/**/*.spec.tsx'); if [ -z \"$files\" ]; then echo 'No tracked tests'; else bun test $files; fi",
 		"dev": "bun --watch src/index.ts"
 	},
 	"dependencies": {

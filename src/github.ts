@@ -9,6 +9,18 @@ import { Readable } from 'stream';
 const workdirRoot = path.join(__dirname, '..', 'workdir');
 const threadsCachePath = path.join(workdirRoot, 'threads.json');
 const codexCanonicalDir = path.join(Bun.env.HOME!, '.codex');
+const commandPath = [
+	path.dirname(process.execPath),
+	path.join(Bun.env.HOME!, 'bin'),
+	'/opt/homebrew/bin',
+	'/opt/homebrew/sbin',
+	'/usr/local/bin',
+	process.env.PATH,
+]
+	.filter(Boolean)
+	.join(':');
+
+process.env.PATH = commandPath;
 
 const whitelist = new Set(['decideroo', 'hanabi', 'hegemony', 'phantom-ink']);
 
@@ -33,7 +45,7 @@ const threads = {
 };
 
 export function createGithubMiddleware(opts: { path: string }) {
-	const webhooks = new Webhooks({ secret: env.GITHUB_APP_KEY });
+	const webhooks = new Webhooks({ secret: env.UPDATE_BEARER_KEY });
 
 	webhooks.onError(error => {
 		console.error('webhook error:', error.message);
@@ -148,7 +160,7 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 	await fsp.rm(agentsFile, { force: true });
 	await fsp.writeFile(agentsFile, AGENTS_MD);
 
-	await cmd(`bun install`);
+	await cmd(`${JSON.stringify(process.execPath)} install`);
 	const envPath = path.join(repoDir, '.env');
 	if ((await fsp.exists(envPath)) && (await Bun.file(envPath).text()).includes('env-manager'))
 		await cmd(`env-manager down`);
@@ -176,6 +188,7 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 			cwd: repoDir,
 			env: {
 				...(Bun.env as any),
+				PATH: commandPath,
 				CODEX_HOME: codexHome,
 				GH_TOKEN: (await Bun.$`gh auth token --user smirea-ai`.text()).trim(),
 			},
@@ -213,7 +226,7 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 
 const cmd = (() => {
 	let cwd = process.cwd();
-	let env = process.env;
+	let env: Record<string, any> = { ...process.env, PATH: commandPath };
 
 	return Object.assign(
 		async function cmd(command: string, options: { cwd?: string; env?: Record<string, any> } = {}) {
@@ -250,7 +263,7 @@ const cmd = (() => {
 				cwd = target;
 			},
 			setEnv: (target: Record<string, any>) => {
-				env = target;
+				env = { ...target, PATH: target.PATH ?? commandPath };
 			},
 			updateEnv: (diff: Record<string, any>) => {
 				env = { ...env, ...diff };

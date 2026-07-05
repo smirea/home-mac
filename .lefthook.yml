@@ -11,4 +11,4 @@ pre-commit:
     typecheck:
       run: bunx --bun tsgo --noEmit
     test:
-      run: bun test --pass-with-no-tests
+      run: bun run test
