@@ -153,7 +153,11 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 	};
 	for (const [k, v] of Object.entries(gitConfig)) await cmd(`git config set --local '${k}' '${v}'`);
 	const branchName = `issue-${issue}`;
-	if ((await cmd('git branch --show-current')) !== branchName) await cmd(`git checkout -b ${branchName}`);
+	if ((await cmd('git branch --show-current')) !== branchName) {
+		await cmd(
+			`if git show-ref --verify --quiet refs/heads/${branchName}; then git checkout ${branchName}; else git checkout -b ${branchName}; fi`,
+		);
+	}
 
 	if (!(await fsp.exists(codexHome))) await fsp.cp(codexCanonicalDir, codexHome, { recursive: true });
 	const agentsFile = path.join(codexHome, 'AGENTS.md');
