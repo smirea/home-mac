@@ -22,7 +22,7 @@ const commandPath = [
 
 process.env.PATH = commandPath;
 
-const whitelist = new Set(['decideroo', 'hanabi', 'hegemony', 'phantom-ink']);
+const whitelist = new Set(['decideroo', 'hanabi', 'hegemony', 'ios-voice-memo', 'phantom-ink']);
 
 // setTimeout(() => fixIssue({ repoFullName: 'smirea/phantom-ink', issue: '1' }), 10);
 
