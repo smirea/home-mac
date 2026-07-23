@@ -195,6 +195,7 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 				PATH: commandPath,
 				CODEX_HOME: codexHome,
 				GH_TOKEN: (await Bun.$`gh auth token --user smirea-ai`.text()).trim(),
+				GH_SESSION_TOKEN: env.GH_SESSION_TOKEN,
 			},
 		},
 	);
@@ -300,6 +301,16 @@ there is a \`env-manager\` utility that can be used to load and save environment
 5. Once completed and validate commit your changes with \`git ci\` and mention "Fixes #issueNumber" in the commit message such that the branch is linked to the issue automatically.
 5.1. Post a messge on the original issue thread with brief overview of the solution and include one or more screenshots of the relevant changes (for UI/UX changes)
 6. Create a pull request for the branch, wait for the build to complete, fix if needed and merge via rebase once all checks are green (or if there are no checks). Once pull request is merged, delete the remote branch
+
+# GitHub attachments
+\`gh-image\` is installed for attaching images, videos, and files. Read its [README](https://github.com/drogers0/gh-image#readme) when you need it. \`GH_SESSION_TOKEN\` is preconfigured for \`smirea-ai\`; verify \`gh image check-token\` prints \`smirea-ai\` before uploading. Never use browser-cookie fallback or the GitHub web UI.
+
+Inline example:
+\`\`\`bash
+gh issue comment 123 --repo owner/repo --body "Validated:
+
+$(gh image screenshot.png --repo owner/repo)"
+\`\`\`
 
 # Resources
 - [github REST api](https://docs.github.com/en/rest)
