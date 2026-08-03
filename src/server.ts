@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { repoConfig } from './repoConfig.ts';
 import { createGithubMiddleware } from './github.ts';
@@ -54,12 +55,14 @@ export function createFetchHandler({
 }
 
 async function servePublicFile(request: Request, pathname: string, publicDir?: string) {
-	if (!publicDir || !pathname.startsWith('/public/')) return undefined;
+	if (!publicDir || (pathname !== '/public' && !pathname.startsWith('/public/'))) return undefined;
 	if (request.method !== 'GET' && request.method !== 'HEAD') {
 		return json({ error: 'Use GET or HEAD for public files', ok: false }, 405, {
 			allow: 'GET, HEAD',
 		});
 	}
+	if (pathname === '/public') return Response.redirect(new URL('/public/', request.url), 308);
+	if (pathname === '/public/') return servePublicIndex(request, publicDir);
 
 	let filename: string;
 	try {
@@ -82,6 +85,51 @@ async function servePublicFile(request: Request, pathname: string, publicDir?: s
 			'content-type': file.type || 'application/octet-stream',
 		},
 	});
+}
+
+async function servePublicIndex(request: Request, publicDir: string) {
+	const entries = await readdir(publicDir, { withFileTypes: true }).catch(() => []);
+	const files = entries
+		.filter(entry => entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/i.test(entry.name))
+		.map(entry => entry.name)
+		.sort((left, right) => left.localeCompare(right));
+	const items = files
+		.map(filename => `<li><a href="/public/${encodeURIComponent(filename)}">${escapeHtml(filename)}</a></li>`)
+		.join('');
+	const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Published HTML</title>
+<style>
+body{max-width:720px;margin:60px auto;padding:0 20px;background:#f7f6f2;color:#181a25;font:16px/1.5 ui-sans-serif,system-ui,sans-serif}
+h1{font-size:clamp(32px,7vw,56px);letter-spacing:-.04em}ul{padding:0;list-style:none}li{margin:10px 0}
+a{display:block;border:1px solid #dddce4;border-radius:10px;background:#fff;padding:14px 16px;color:#412773;font-weight:750;text-decoration:none;box-shadow:0 8px 24px rgba(39,30,63,.07)}a:hover{border-color:#9f88c5}
+</style>
+</head>
+<body>
+<h1>Published HTML</h1>
+${items ? `<ul>${items}</ul>` : '<p>No HTML files are published.</p>'}
+</body>
+</html>`;
+
+	return new Response(request.method === 'HEAD' ? null : html, {
+		headers: {
+			'cache-control': 'no-store',
+			'content-length': String(Buffer.byteLength(html)),
+			'content-type': 'text/html; charset=utf-8',
+		},
+	});
+}
+
+function escapeHtml(value: string) {
+	return value
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.replaceAll('"', '&quot;')
+		.replaceAll("'", '&#039;');
 }
 
 function streamUpdate(

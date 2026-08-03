@@ -7,6 +7,7 @@ Control-plane server for this Mac. It exposes `mac.stf.lol` and lets GitHub Acti
 `src/index.ts` starts a Bun HTTP server on `0.0.0.0:3000`.
 
 - `GET /` returns `{ "ok": true }`.
+- `GET /public/` lists the published HTML files.
 - `GET /public/<filename>` serves flat files from `~/Sites/mac.stf.lol`.
 - `POST /update/:repo` requires `Authorization: Bearer <UPDATE_BEARER_KEY>`.
 - Unknown repos fail before deployment work starts. Add supported repos in `src/repoConfig.ts`.
