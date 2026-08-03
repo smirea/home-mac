@@ -23,7 +23,7 @@ mkdir -p ~/Sites/mac.stf.lol
 cp report.html ~/Sites/mac.stf.lol/report.html
 ```
 
-It will be available at `https://mac.stf.lol/public/report.html`. Public filenames are limited to letters, numbers, dots, dashes, and underscores; subdirectories are not exposed.
+It will be available at `https://mac.stf.lol/public/report.html`. Public files are read from disk on every request and served with `Cache-Control: no-store`, so replacing a file updates the public response without restarting the server. Public filenames are limited to letters, numbers, dots, dashes, and underscores; subdirectories are not exposed.
 
 ## Always-On Service
 

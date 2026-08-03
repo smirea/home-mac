@@ -80,7 +80,7 @@ async function servePublicFile(request: Request, pathname: string, publicDir?: s
 
 	return new Response(request.method === 'HEAD' ? null : file, {
 		headers: {
-			'cache-control': 'public, max-age=300',
+			'cache-control': 'no-store',
 			'content-length': String(file.size),
 			'content-type': file.type || 'application/octet-stream',
 		},
