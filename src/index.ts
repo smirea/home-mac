@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import env from './env.ts';
 import { createFetchHandler } from './server.ts';
 import { runSetupRepoContainer } from './setupRunner.ts';
@@ -9,6 +11,7 @@ if (env.UPDATE_BEARER_KEY.length === 0) {
 const server = Bun.serve({
 	fetch: createFetchHandler({
 		bearerKey: env.UPDATE_BEARER_KEY,
+		publicDir: path.join(os.homedir(), 'Sites', 'mac.stf.lol'),
 		runUpdate: runSetupRepoContainer,
 	}),
 	hostname: '0.0.0.0',

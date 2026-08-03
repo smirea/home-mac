@@ -1,16 +1,19 @@
 import { timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
 import { repoConfig } from './repoConfig.ts';
 import { createGithubMiddleware } from './github.ts';
 
 type ServerOptions = {
 	bearerKey: string;
 	configuredRepos?: Record<string, unknown>;
+	publicDir?: string;
 	runUpdate: (repo: string, writeLog: (chunk: string) => void) => Promise<void>;
 };
 
 export function createFetchHandler({
 	bearerKey,
 	configuredRepos = repoConfig,
+	publicDir,
 	runUpdate,
 }: ServerOptions): (request: Request) => Promise<Response> | Response {
 	const activeUpdates = new Set<string>();
@@ -19,6 +22,9 @@ export function createFetchHandler({
 		const url = new URL(req.url);
 
 		if (url.pathname === '/') return json({ ok: true });
+
+		const publicFile = await servePublicFile(req, url.pathname, publicDir);
+		if (publicFile) return publicFile;
 
 		if (req.method === 'POST' && url.pathname.startsWith('/git-webhook/')) {
 			return createGithubMiddleware({ path: '/git-webhook/' })(req);
@@ -45,6 +51,37 @@ export function createFetchHandler({
 
 		return streamUpdate(repo, activeUpdates, runUpdate);
 	};
+}
+
+async function servePublicFile(request: Request, pathname: string, publicDir?: string) {
+	if (!publicDir || !pathname.startsWith('/public/')) return undefined;
+	if (request.method !== 'GET' && request.method !== 'HEAD') {
+		return json({ error: 'Use GET or HEAD for public files', ok: false }, 405, {
+			allow: 'GET, HEAD',
+		});
+	}
+
+	let filename: string;
+	try {
+		filename = decodeURIComponent(pathname.slice('/public/'.length));
+	} catch {
+		return json({ error: 'Not found', ok: false }, 404);
+	}
+
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename)) {
+		return json({ error: 'Not found', ok: false }, 404);
+	}
+
+	const file = Bun.file(path.join(publicDir, filename));
+	if (!(await file.exists())) return json({ error: 'Not found', ok: false }, 404);
+
+	return new Response(request.method === 'HEAD' ? null : file, {
+		headers: {
+			'cache-control': 'public, max-age=300',
+			'content-length': String(file.size),
+			'content-type': file.type || 'application/octet-stream',
+		},
+	});
 }
 
 function streamUpdate(

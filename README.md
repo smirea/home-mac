@@ -7,12 +7,22 @@ Control-plane server for this Mac. It exposes `mac.stf.lol` and lets GitHub Acti
 `src/index.ts` starts a Bun HTTP server on `0.0.0.0:3000`.
 
 - `GET /` returns `{ "ok": true }`.
+- `GET /public/<filename>` serves flat files from `~/Sites/mac.stf.lol`.
 - `POST /update/:repo` requires `Authorization: Bearer <UPDATE_BEARER_KEY>`.
 - Unknown repos fail before deployment work starts. Add supported repos in `src/repoConfig.ts`.
 - Valid updates run `src/setupRepoContainer.ts deploy --repo <repo> --defer-router-restart` and stream deployment logs back as `text/plain`.
 - Successful streamed deploys end with `DEPLOY_OK repo=<repo>`. Failed streamed deploys end with `DEPLOY_FAILED repo=<repo>`.
 
 `UPDATE_BEARER_KEY` is defined through env-manager and typed in the generated `src/env.ts`.
+
+Publish a file with:
+
+```sh
+mkdir -p ~/Sites/mac.stf.lol
+cp report.html ~/Sites/mac.stf.lol/report.html
+```
+
+It will be available at `https://mac.stf.lol/public/report.html`. Public filenames are limited to letters, numbers, dots, dashes, and underscores; subdirectories are not exposed.
 
 ## Always-On Service
 
