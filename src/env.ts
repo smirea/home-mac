@@ -5,7 +5,6 @@ const env = z
 	.object({
 		UPDATE_BEARER_KEY: z.string(),
 		GITHUB_APP_KEY: z.string(),
-		GH_SESSION_TOKEN: z.string(),
 	})
 	.parse(process.env);
 

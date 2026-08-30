@@ -168,6 +168,8 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 	const envPath = path.join(repoDir, '.env');
 	if ((await fsp.exists(envPath)) && (await Bun.file(envPath).text()).includes('env-manager'))
 		await cmd(`env-manager down`);
+	const codexEnv = { ...Bun.env };
+	delete codexEnv.GH_SESSION_TOKEN;
 
 	const proc = Bun.spawn(
 		[
@@ -191,11 +193,10 @@ export async function fixIssue({ repoFullName, issue }: { repoFullName: string; 
 			stderr: 'inherit',
 			cwd: repoDir,
 			env: {
-				...(Bun.env as any),
+				...codexEnv,
 				PATH: commandPath,
 				CODEX_HOME: codexHome,
 				GH_TOKEN: (await Bun.$`gh auth token --user smirea-ai`.text()).trim(),
-				GH_SESSION_TOKEN: env.GH_SESSION_TOKEN,
 			},
 		},
 	);
@@ -303,7 +304,7 @@ there is a \`env-manager\` utility that can be used to load and save environment
 6. Create a pull request for the branch, wait for the build to complete, fix if needed and merge via rebase once all checks are green (or if there are no checks). Once pull request is merged, delete the remote branch
 
 # GitHub attachments
-\`gh-image\` is installed for attaching images, videos, and files. Read its [README](https://github.com/drogers0/gh-image#readme) when you need it. \`GH_SESSION_TOKEN\` is preconfigured for \`smirea-ai\`; verify \`gh image check-token\` prints \`smirea-ai\` before uploading. Never use browser-cookie fallback or the GitHub web UI.
+\`gh-image\` v1.3+ is installed for attaching images and videos. \`GH_TOKEN\` is preconfigured for \`smirea-ai\`; verify \`gh api user --jq .login\` prints \`smirea-ai\` before uploading. Only upload to repositories where \`smirea-ai\` has push access so \`gh-image\` uses token authentication. Never supply \`--token\` or \`GH_SESSION_TOKEN\`, which force the expiring browser-session path, and never use the GitHub web UI.
 
 Inline example:
 \`\`\`bash
