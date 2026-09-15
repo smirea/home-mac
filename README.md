@@ -79,6 +79,20 @@ Runtime state, generated build contexts, app data, and router config live under:
 /Users/stefan/code/.repo-containers
 ```
 
+Builder cleanup runs after every build attempt and hourly through the
+`lol.stf.repo-containers.cleanup` LaunchAgent, installed automatically by deployment.
+It prunes unused BuildKit cache toward 2 GB and trims the builder's virtual disk to
+return freed blocks to macOS. Cache used by active builds is preserved, so 2 GB is
+a cleanup target, not a hard disk limit. Running app containers and their data are
+unaffected. Evicted layers are rebuilt when needed.
+
+Run `setup-repo-container cleanup --install` to clean up now and install the hourly
+job on an existing machine. Ordinary `cleanup` removes unused repo images and
+prunes builder cache; `--builder` clears all unused builder cache, and
+`--skip-builder` keeps it. The hourly job uses `--cache-only` to avoid removing an
+image between its build and container creation. Cleanup failures are reported in
+`~/Library/Logs/repo-containers/cleanup.stderr.log`.
+
 ## Useful Commands
 
 ```sh

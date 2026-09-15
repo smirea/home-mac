@@ -137,6 +137,7 @@ async function deploy(cli: Cli) {
 	const repo = resolveRepo(repoArg);
 	const config = requireRepoConfig(repo.name);
 	await ensureDependencies();
+	await installCleanupLaunchAgent();
 	const name = sanitizeName(option(cli, 'name') ?? repo.name);
 	const domain = option(cli, 'domain') ?? defaultDomain;
 	const subdomain = option(cli, 'subdomain') ?? config.subdomain;
@@ -185,7 +186,15 @@ async function deploy(cli: Cli) {
 	await writeStartScript(buildContextDir, config.container);
 	await writeNginxConfig(buildContextDir, config.container);
 	await writeContainerfile(containerfilePath, config.container, requiredEnv);
-	run('container', ['build', '-f', containerfilePath, '-t', image, buildContextDir]);
+	try {
+		run('container', ['build', '-f', containerfilePath, '-t', image, buildContextDir]);
+	} finally {
+		try {
+			pruneBuilderCache();
+		} catch (error) {
+			console.warn(`Builder cleanup failed; hourly cleanup will retry: ${error}`);
+		}
+	}
 
 	await writeRuntimeEnv(repoDir, runtimeEnvPath, requiredEnv);
 
@@ -246,17 +255,28 @@ async function refreshRouterFromCli(cli: Cli) {
 async function cleanupFromCli(cli: Cli) {
 	await ensureBaseDirs();
 	ensureCommand('container');
+	if (option(cli, 'install') === 'true') await installCleanupLaunchAgent();
+	if (option(cli, 'cache-only') === 'true') {
+		pruneBuilderCache();
+		return;
+	}
 	await ensureContainerRuntime();
 
 	const deletedImages = pruneUnusedRepoImages();
-	if (option(cli, 'builder') === 'true' && option(cli, 'skip-builder') !== 'true') {
-		run('container', ['builder', 'delete', '--force'], { allowFailure: true });
-		console.log('Deleted builder cache container');
-	} else {
-		console.log('Kept builder cache; pass --builder to delete it');
+	if (option(cli, 'skip-builder') !== 'true') {
+		pruneBuilderCache(option(cli, 'builder') === 'true' ? 0 : 2048);
 	}
 
 	console.log(`Deleted ${deletedImages} unused repo image${deletedImages === 1 ? '' : 's'}`);
+}
+
+function pruneBuilderCache(keepStorageMb = 2048) {
+	const builder = readContainers().find(container => container.configuration?.id === 'buildkit');
+	if (!builder) return;
+	if (builder.status !== 'running') run('container', ['builder', 'start']);
+	// BuildKit preserves records used by active builds; trimming returns freed VM blocks to macOS.
+	run('container', ['exec', 'buildkit', 'buildctl', 'prune', '--all', '--keep-storage', String(keepStorageMb)]);
+	run('container', ['exec', 'buildkit', 'fstrim', '/']);
 }
 
 async function status() {
@@ -856,22 +876,24 @@ function isContainerRunning(containerName: string) {
 
 function readContainers(): ContainerListEntry[] {
 	const result = spawnSync('container', ['list', '--all', '--format', 'json'], {
+		env: { ...process.env },
 		encoding: 'utf8',
 		maxBuffer: 1024 * 1024 * 50,
 	});
 	if (result.status !== 0) {
-		throw new Error(`container list failed\n${result.stderr ?? ''}`);
+		throw new Error(`container list failed\n${result.error ?? result.stderr ?? ''}`);
 	}
 	return JSON.parse(result.stdout || '[]') as ContainerListEntry[];
 }
 
 function readImages(): ImageListEntry[] {
 	const result = spawnSync('container', ['image', 'list', '--format', 'json'], {
+		env: { ...process.env },
 		encoding: 'utf8',
 		maxBuffer: 1024 * 1024 * 50,
 	});
 	if (result.status !== 0) {
-		throw new Error(`container image list failed\n${result.stderr ?? ''}`);
+		throw new Error(`container image list failed\n${result.error ?? result.stderr ?? ''}`);
 	}
 	return JSON.parse(result.stdout || '[]') as ImageListEntry[];
 }
@@ -887,9 +909,7 @@ function pruneUnusedRepoImages() {
 		.filter((reference): reference is string => Boolean(reference))
 		.filter(reference => reference.startsWith('local/paas-') && !referencedImages.has(reference));
 
-	for (const image of staleImages) {
-		run('container', ['image', 'delete', image], { allowFailure: true });
-	}
+	for (const image of staleImages) run('container', ['image', 'delete', image]);
 
 	return staleImages.length;
 }
@@ -1167,6 +1187,24 @@ async function installAppLaunchAgent(name: string) {
 	run('launchctl', ['bootout', `gui/${process.getuid?.()}`, plistPath], { allowFailure: true });
 	run('launchctl', ['bootstrap', `gui/${process.getuid?.()}`, plistPath], { allowFailure: true });
 	run('launchctl', ['kickstart', '-k', `gui/${process.getuid?.()}/${label}`], { allowFailure: true });
+}
+
+async function installCleanupLaunchAgent() {
+	const label = 'lol.stf.repo-containers.cleanup';
+	const plistPath = path.join(launchAgentsDir, `${label}.plist`);
+	const plist = plistDocument(label, [which('bun') || process.execPath, scriptPath, 'cleanup', '--cache-only'], {
+		startInterval: 3600,
+		stdout: path.join(logsDir, 'cleanup.stdout.log'),
+		stderr: path.join(logsDir, 'cleanup.stderr.log'),
+	});
+	const existing = await readFile(plistPath, 'utf8').catch(() => '');
+	const service = `gui/${process.getuid?.()}/${label}`;
+	if (existing === plist && run('launchctl', ['print', service], { capture: true, allowFailure: true }).status === 0) {
+		return;
+	}
+	await writeFile(plistPath, plist);
+	run('launchctl', ['bootout', `gui/${process.getuid?.()}`, plistPath], { allowFailure: true });
+	run('launchctl', ['bootstrap', `gui/${process.getuid?.()}`, plistPath]);
 }
 
 function plistDocument(
