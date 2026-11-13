@@ -172,7 +172,9 @@ async function deploy(cli: Cli) {
 	const commit = run('git', ['-C', repoDir, 'rev-parse', '--short=12', 'HEAD'], {
 		capture: true,
 	}).stdout.trim();
-	const image = `local/${containerName}:${commit}`;
+	// Fully qualified: container 1.x stores builds as docker.io/local/..., and a bare local/... reference
+	// would resolve to a same-tag image left over from container 0.x instead of the fresh build.
+	const image = `docker.io/local/${containerName}:${commit}`;
 	const requiredEnv = {
 		API_PORT: String(apiPort),
 		CLIENT_PORT: String(containerPort),
