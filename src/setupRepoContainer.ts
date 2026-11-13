@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { lstat, mkdir, readFile, readlink, rename, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -48,17 +48,20 @@ type State = {
 	tunnels: Record<string, TunnelState>;
 };
 
+// Shapes from Apple's `container` CLI 1.x; 0.x kept `status` as a string and `networks`/`reference` at the top level.
 type ContainerListEntry = {
-	status?: string;
+	status?: {
+		state?: string;
+		networks?: Array<{ ipv4Address?: string }>;
+	};
 	configuration?: {
 		id?: string;
 		image?: { reference?: string };
 	};
-	networks?: Array<{ ipv4Address?: string }>;
 };
 
 type ImageListEntry = {
-	reference?: string;
+	configuration?: { name?: string };
 };
 
 const home = homedir();
@@ -75,8 +78,10 @@ const defaultGithubOwner = 'smirea';
 const defaultDomain = 'stf.lol';
 const defaultTunnelName = 'default';
 const controlPlaneHostname = 'mac.stf.lol';
-const controlPlaneService = 'http://192.168.64.1:3000';
+const controlPlanePort = 3000;
 const cloudflaredImage = 'cloudflare/cloudflared:2026.3.0';
+const bunImage = 'oven/bun:1.4.4-slim';
+const routerLockPath = path.join(stateDir, 'router.lock');
 const pathEntries = [
 	path.join(home, '.bun', 'bin'),
 	path.join(home, 'bin'),
@@ -273,7 +278,7 @@ async function cleanupFromCli(cli: Cli) {
 function pruneBuilderCache(keepStorageMb = 2048) {
 	const builder = readContainers().find(container => container.configuration?.id === 'buildkit');
 	if (!builder) return;
-	if (builder.status !== 'running') run('container', ['builder', 'start']);
+	if (builder.status?.state !== 'running') run('container', ['builder', 'start']);
 	// BuildKit preserves records used by active builds; trimming returns freed VM blocks to macOS.
 	run('container', ['exec', 'buildkit', 'buildctl', 'prune', '--all', '--keep-storage', String(keepStorageMb)]);
 	run('container', ['exec', 'buildkit', 'fstrim', '/']);
@@ -285,9 +290,9 @@ async function status() {
 	console.log('Containers');
 	for (const container of containers) {
 		const id = container.configuration?.id ?? '(unknown)';
-		const status = container.status ?? '(unknown)';
+		const status = container.status?.state ?? '(unknown)';
 		const image = container.configuration?.image?.reference ?? '';
-		const addresses = (container.networks ?? [])
+		const addresses = (container.status?.networks ?? [])
 			.map(network => network.ipv4Address?.split('/')[0])
 			.filter(Boolean)
 			.join(',');
@@ -464,14 +469,14 @@ async function runProjectChecks(repoDir: string, cli: Cli, config: RepoConfig) {
 	};
 
 	if (packageJson.scripts?.test && option(cli, 'skip-tests') !== 'true') {
-		const result = run('bun', ['test'], {
+		const result = run('bun', ['test', '--pass-with-no-tests'], {
 			cwd: repoDir,
 			capture: true,
 			allowFailure: true,
 		});
 		process.stdout.write(result.stdout);
 		process.stderr.write(result.stderr);
-		if (result.status !== 0 && !result.stderr.includes('No tests found')) {
+		if (result.status !== 0) {
 			throw new Error('bun test failed');
 		}
 	}
@@ -661,7 +666,7 @@ async function writeContainerfile(
 	if (container.type === 'bun-server') {
 		await writeFile(
 			containerfilePath,
-			`FROM oven/bun:1.3.6-slim
+			`FROM ${bunImage}
 
 WORKDIR /app
 COPY . .
@@ -680,7 +685,7 @@ CMD ["/app/paas-start.sh"]
 		const buildEnvPrefix = envAssignments(buildEnv, container.buildEnvKeys);
 		await writeFile(
 			containerfilePath,
-			`FROM oven/bun:1.3.6-slim
+			`FROM ${bunImage}
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++
@@ -699,7 +704,7 @@ CMD ["/app/paas-start.sh"]
 
 	await writeFile(
 		containerfilePath,
-		`FROM oven/bun:1.3.6-slim
+		`FROM ${bunImage}
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends nginx-light python3 make g++
@@ -835,33 +840,61 @@ async function startApp(app: AppState) {
 	}
 }
 
+// Every app's launchd starter refreshes routes; when the container network changes they all race to
+// recreate the shared router container, so state updates and router restarts run one at a time.
 async function refreshContainerRoute(name: string, force: boolean, restartRouter = true) {
-	const state = await readState();
-	const app = state.apps[name];
-	if (!app) throw new Error(`No app named ${name} in ${statePath}`);
-	const tunnel = await ensureTunnelInState(state, appTunnelName(app));
+	await withRouterLock(async () => {
+		const state = await readState();
+		const app = state.apps[name];
+		if (!app) throw new Error(`No app named ${name} in ${statePath}`);
+		const tunnel = await ensureTunnelInState(state, appTunnelName(app));
 
-	const containerIp = getContainerIp(app.containerName);
-	const changed = app.containerIp !== containerIp;
-	if (app.containerIp !== containerIp) {
-		app.containerIp = containerIp;
-		app.updatedAt = new Date().toISOString();
-		await writeState(state);
+		const containerIp = getContainerIp(app.containerName);
+		if (app.containerIp !== containerIp) {
+			app.containerIp = containerIp;
+			app.updatedAt = new Date().toISOString();
+			await writeState(state);
+		}
+
+		const currentState = await readState();
+		const currentTunnel = await ensureTunnelInState(currentState, tunnel.name);
+		const configChanged = await writeCloudflaredRouterConfig(currentState, currentTunnel);
+		if (restartRouter && (force || configChanged || !isContainerRunning(currentTunnel.containerName))) {
+			await recreateCloudflaredRouter(currentTunnel);
+		}
+	});
+}
+
+async function withRouterLock<T>(fn: () => Promise<T>): Promise<T> {
+	const staleAfterMs = 5 * 60_000;
+	const deadline = Date.now() + 10 * 60_000;
+	while (true) {
+		try {
+			await mkdir(routerLockPath);
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			const lockedAt = (await stat(routerLockPath).catch(() => null))?.mtimeMs;
+			if (lockedAt !== undefined && Date.now() - lockedAt > staleAfterMs) {
+				await rm(routerLockPath, { recursive: true, force: true });
+				continue;
+			}
+			if (Date.now() > deadline) throw new Error(`Timed out waiting for ${routerLockPath}`);
+			await Bun.sleep(1000);
+		}
 	}
-
-	const currentState = await readState();
-	const currentTunnel = await ensureTunnelInState(currentState, tunnel.name);
-	await writeCloudflaredRouterConfig(currentState, currentTunnel);
-	if (restartRouter && (force || changed || !isContainerRunning(currentTunnel.containerName))) {
-		await recreateCloudflaredRouter(currentTunnel);
+	try {
+		return await fn();
+	} finally {
+		await rm(routerLockPath, { recursive: true, force: true });
 	}
 }
 
 function getContainerIp(containerName: string) {
 	const raw = run('container', ['inspect', containerName], { capture: true }).stdout;
-	const parsed = JSON.parse(raw);
+	const parsed = JSON.parse(raw) as ContainerListEntry | ContainerListEntry[];
 	const container = Array.isArray(parsed) ? parsed[0] : parsed;
-	const ipv4 = container?.networks?.find((network: { ipv4Address?: string }) => network.ipv4Address)?.ipv4Address;
+	const ipv4 = container?.status?.networks?.find(network => network.ipv4Address)?.ipv4Address;
 	if (!ipv4) throw new Error(`Could not find IPv4 address for ${containerName}`);
 	return ipv4.split('/')[0];
 }
@@ -905,9 +938,10 @@ function pruneUnusedRepoImages() {
 			.filter((reference): reference is string => Boolean(reference)),
 	);
 	const staleImages = readImages()
-		.map(image => image.reference)
+		.map(image => image.configuration?.name)
 		.filter((reference): reference is string => Boolean(reference))
-		.filter(reference => reference.startsWith('local/paas-') && !referencedImages.has(reference));
+		// container 1.x stores newly built local images under docker.io/local/...; older builds lack the prefix.
+		.filter(reference => /^(docker\.io\/)?local\/paas-/.test(reference) && !referencedImages.has(reference));
 
 	for (const image of staleImages) run('container', ['image', 'delete', image]);
 
@@ -929,7 +963,7 @@ async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 	const credentialsFileName = path.basename(tunnel.credentialsFile);
 	const controlPlaneRule =
 		tunnel.name === defaultTunnelName
-			? `  - hostname: ${controlPlaneHostname}\n    service: ${controlPlaneService}`
+			? `  - hostname: ${controlPlaneHostname}\n    service: http://${getHostGateway()}:${controlPlanePort}`
 			: '';
 	const appRules = Object.values(state.apps)
 		.filter(app => appTunnelName(app) === tunnel.name && app.containerIp)
@@ -937,17 +971,28 @@ async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 		.map(app => `  - hostname: ${app.hostname}\n    service: http://${app.containerIp}:${app.containerPort}`)
 		.join('\n');
 	const rules = [controlPlaneRule, appRules].filter(Boolean).join('\n');
-
-	await writeFile(
-		tunnel.configPath,
-		`tunnel: ${tunnel.id}
+	const config = `tunnel: ${tunnel.id}
 credentials-file: /etc/cloudflared-host/${credentialsFileName}
 
 ingress:
 ${rules}
   - service: http_status:404
-`,
-	);
+`;
+
+	const previous = await readFile(tunnel.configPath, 'utf8').catch(() => null);
+	if (previous === config) return false;
+	await writeFile(tunnel.configPath, config);
+	return true;
+}
+
+// The router container reaches the Mac's control plane through the container network's gateway,
+// which moved from 192.168.64.1 to 192.168.65.1 with container 1.x, so it is read rather than hardcoded.
+function getHostGateway() {
+	const raw = run('container', ['network', 'list', '--format', 'json'], { capture: true }).stdout;
+	const networks = JSON.parse(raw) as Array<{ id?: string; status?: { ipv4Gateway?: string } }>;
+	const gateway = networks.find(network => network.id === 'default')?.status?.ipv4Gateway;
+	if (!gateway) throw new Error('Could not find the default container network gateway');
+	return gateway;
 }
 
 async function resolveTunnelState(cli: Cli, tunnelName: string): Promise<TunnelState> {
