@@ -2,7 +2,7 @@
 
 import { lstat, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { accessSync, constants, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, uptime } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +73,10 @@ const appsDir = path.join(stateDir, 'apps');
 const logsDir = path.join(home, 'Library', 'Logs', 'repo-containers');
 const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
 const statePath = path.join(stateDir, 'state.json');
+// Starting every app container at login alongside everything else pegged the machine, so app starts wait
+// until bootStaggerBaseSeconds after boot and then go one at a time, bootStaggerStepSeconds apart.
+const bootStaggerBaseSeconds = 30;
+const bootStaggerStepSeconds = 5;
 const cloudflaredConfigPath = path.join(home, '.cloudflared', 'config.yml');
 const defaultGithubOwner = 'smirea';
 const defaultDomain = 'stf.lol';
@@ -247,9 +251,19 @@ async function startFromCli(cli: Cli) {
 	requireRepoConfig(name);
 	const app = state.apps[name];
 	if (!app) throw new Error(`No app named ${name} in ${statePath}`);
+	await waitForBootStaggerSlot(name, Object.keys(state.apps));
 	await ensureContainerRuntime();
 	await startApp(app);
 	await refreshContainerRoute(name, false);
+}
+
+async function waitForBootStaggerSlot(name: string, appNames: string[]) {
+	const slot = appNames.toSorted().indexOf(name);
+	const startAtUptime = bootStaggerBaseSeconds + slot * bootStaggerStepSeconds;
+	const waitSeconds = startAtUptime - uptime();
+	if (waitSeconds <= 0) return;
+	console.log(`Waiting ${Math.ceil(waitSeconds)}s for ${name}'s boot slot (${startAtUptime}s after boot)`);
+	await Bun.sleep(waitSeconds * 1000);
 }
 
 async function refreshRouterFromCli(cli: Cli) {
