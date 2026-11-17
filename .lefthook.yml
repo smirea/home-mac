@@ -1,14 +1,23 @@
 pre-commit:
-  parallel: true
-  commands:
-    oxlint:
-      glob: '*.{js,ts,jsx,tsx}'
-      run: bunx oxlint --fix {staged_files}
-      stage_fixed: true
-    oxfmt:
-      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
-      stage_fixed: true
-    typecheck:
-      run: bunx --bun tsgo --noEmit
-    test:
-      run: bun run test
+  jobs:
+    # CI and cloud agents don't have the shared command.
+    - name: worktree
+      run: '[ ! -x "$HOME/bin/agent-t3-worktree" ] || "$HOME/bin/agent-t3-worktree" check --heal'
+    - group:
+        parallel: true
+        jobs:
+          # One job: both fixers rewrite the same staged files, and in parallel one would overwrite the other's edit.
+          - name: fix
+            run: >-
+              bunx oxlint --fix --no-error-on-unmatched-pattern {staged_files}
+              && bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
+            stage_fixed: true
+          - name: typecheck
+            glob: '*.{js,mjs,mts,ts,tsx,json,jsonc}'
+            run: bun run typecheck
+          # The whole suite: logic tests run in-process in milliseconds, so selecting by diff would save little and
+          # could miss a test whose input is not an import. Git exports GIT_DIR and GIT_INDEX_FILE to hooks, so a
+          # test that runs git in a temp directory would act on this repository unless they are unset first.
+          - name: test
+            glob: '*.{js,mjs,mts,ts,tsx,json}'
+            run: unset $(git rev-parse --local-env-vars); bun run test

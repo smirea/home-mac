@@ -4,9 +4,7 @@
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn",
-		"perf": "warn",
-		"style": "warn",
-		"pedantic": "warn"
+		"perf": "warn"
 	},
 	"rules": {
 		"no-unused-vars": "warn",
@@ -18,7 +16,7 @@
 	},
 	"overrides": [
 		{
-			"files": ["src/config.ts"],
+			"files": ["**/env.ts", "scripts/**", "src/github.ts", "src/repoConfig.ts", "src/setupRepoContainer.ts"],
 			"rules": {
 				"node/no-process-env": "off"
 			}
