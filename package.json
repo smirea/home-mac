@@ -4,21 +4,19 @@
 	"scripts": {
 		"start": "bun src/index.ts",
 		"install-service": "bun src/installMacServerLaunchAgent.ts",
+		"dev": "bun --watch src/index.ts",
 		"lint": "oxlint --fix && oxfmt",
-		"test": "files=$(git ls-files 'src/**/*.test.ts' 'src/**/*.test.tsx' 'src/**/*.spec.ts' 'src/**/*.spec.tsx' 'scripts/**/*.test.ts' 'scripts/**/*.test.tsx' 'scripts/**/*.spec.ts' 'scripts/**/*.spec.tsx'); if [ -z \"$files\" ]; then echo 'No tracked tests'; else bun test $files; fi",
-		"dev": "bun --watch src/index.ts"
+		"typecheck": "bun check",
+		"test": "bun test --pass-with-no-tests"
 	},
 	"dependencies": {
 		"@octokit/webhooks": "^14.2.0",
-		"@types/bun": "^1.3.13",
-		"@typescript/native-preview": "^7.0.0-dev.20260504.1",
+		"@types/bun": "^1.4.4",
 		"chalk": "^5.6.2",
-		"kill-port-process": "^4.0.2",
-		"lefthook": "^2.1.6",
-		"lodash": "^4.18.1",
-		"oxfmt": "^0.47.0",
-		"oxlint": "^1.62.0",
-		"typescript": "^6.0.3",
+		"lefthook": "^2.2.2",
+		"oxfmt": "^0.79.0",
+		"oxlint": "^1.94.0",
 		"zod": "^4.4.3"
-	}
+	},
+	"packageManager": "bun@1.4.4"
 }
