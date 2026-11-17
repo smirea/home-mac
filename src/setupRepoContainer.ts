@@ -31,6 +31,7 @@ type AppState = {
 	apiPort: number;
 	memory: string;
 	cpus: string;
+	disabled?: boolean;
 	updatedAt: string;
 };
 
@@ -109,6 +110,10 @@ if (cli.command === 'deploy') {
 	await refreshRouterFromCli(cli);
 } else if (cli.command === 'cleanup') {
 	await cleanupFromCli(cli);
+} else if (cli.command === 'disable') {
+	await setAppDisabledFromCli(cli, true);
+} else if (cli.command === 'enable') {
+	await setAppDisabledFromCli(cli, false);
 } else if (cli.command === 'status') {
 	await status();
 } else {
@@ -134,7 +139,7 @@ function parseCli(argv: string[]): Cli {
 		options.set(key, [...(options.get(key) ?? []), value]);
 	}
 
-	const commands = new Set(['deploy', 'start', 'refresh-router', 'cleanup', 'status']);
+	const commands = new Set(['deploy', 'start', 'refresh-router', 'cleanup', 'status', 'disable', 'enable']);
 	const command = options.has('status') ? 'status' : commands.has(positionals[0]) ? positionals.shift()! : 'deploy';
 	return { command, positionals, options };
 }
@@ -148,6 +153,10 @@ async function deploy(cli: Cli) {
 	await ensureDependencies();
 	await installCleanupLaunchAgent();
 	const name = sanitizeName(option(cli, 'name') ?? repo.name);
+	// Webhook deploys would otherwise quietly bring a disabled app back.
+	if ((await readState()).apps[name]?.disabled) {
+		throw new Error(`${name} is disabled; run \`setup-repo-container enable --name ${name}\` first`);
+	}
 	const domain = option(cli, 'domain') ?? defaultDomain;
 	const subdomain = option(cli, 'subdomain') ?? config.subdomain;
 	const hostname = option(cli, 'hostname') ?? `${subdomain}.${domain}`;
@@ -251,10 +260,49 @@ async function startFromCli(cli: Cli) {
 	requireRepoConfig(name);
 	const app = state.apps[name];
 	if (!app) throw new Error(`No app named ${name} in ${statePath}`);
-	await waitForBootStaggerSlot(name, Object.keys(state.apps));
+	if (app.disabled) {
+		console.log(`${name} is disabled; not starting it`);
+		return;
+	}
+	await waitForBootStaggerSlot(name, enabledAppNames(state));
 	await ensureContainerRuntime();
 	await startApp(app);
 	await refreshContainerRoute(name, false);
+}
+
+function enabledAppNames(state: State) {
+	return Object.values(state.apps)
+		.filter(app => !app.disabled)
+		.map(app => app.name);
+}
+
+async function setAppDisabledFromCli(cli: Cli, disabled: boolean) {
+	await ensureBaseDirs();
+	const name = sanitizeName(option(cli, 'name') ?? cli.positionals[0] ?? '');
+	const state = await readState();
+	const app = state.apps[name];
+	if (!app) throw new Error(`No app named ${name || '(missing --name)'} in ${statePath}`);
+	app.disabled = disabled;
+	app.updatedAt = new Date().toISOString();
+	await writeState(state);
+
+	if (disabled) {
+		const label = appLaunchAgentLabel(name);
+		run('launchctl', ['bootout', `gui/${process.getuid?.()}/${label}`], { allowFailure: true });
+		run('launchctl', ['disable', `gui/${process.getuid?.()}/${label}`]);
+		if (isContainerRunning(app.containerName)) run('container', ['stop', app.containerName]);
+		await withRouterLock(async () => {
+			const current = await readState();
+			const tunnel = await ensureTunnelInState(current, appTunnelName(app));
+			if (await writeCloudflaredRouterConfig(current, tunnel)) await recreateCloudflaredRouter(tunnel);
+		});
+		console.log(`Disabled ${name}; its container is stopped and kept, and it will not start at login`);
+		return;
+	}
+
+	await ensureContainerRuntime();
+	await installAppLaunchAgent(name);
+	console.log(`Enabled ${name}; its LaunchAgent is starting it`);
 }
 
 async function waitForBootStaggerSlot(name: string, appNames: string[]) {
@@ -320,7 +368,8 @@ async function status() {
 		const upstream = app.containerIp
 			? `${app.containerIp}:${app.containerPort}`
 			: `${app.containerName}:${app.containerPort}`;
-		console.log(`${app.name} [${appTunnelName(app)}]: https://${app.hostname} -> ${upstream}`);
+		const disabled = app.disabled ? ' (disabled)' : '';
+		console.log(`${app.name} [${appTunnelName(app)}]${disabled}: https://${app.hostname} -> ${upstream}`);
 	}
 }
 
@@ -982,7 +1031,7 @@ async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 			? `  - hostname: ${controlPlaneHostname}\n    service: http://${getHostGateway()}:${controlPlanePort}`
 			: '';
 	const appRules = Object.values(state.apps)
-		.filter(app => appTunnelName(app) === tunnel.name && app.containerIp)
+		.filter(app => appTunnelName(app) === tunnel.name && app.containerIp && !app.disabled)
 		.sort((left, right) => left.hostname.localeCompare(right.hostname))
 		.map(app => `  - hostname: ${app.hostname}\n    service: http://${app.containerIp}:${app.containerPort}`)
 		.join('\n');
@@ -1237,7 +1286,7 @@ async function installAppLaunchAgent(name: string) {
 	const bun = which('bun') || process.execPath;
 	if (!bun) throw new Error('bun is not installed');
 
-	const label = `lol.stf.repo-containers.${name}`;
+	const label = appLaunchAgentLabel(name);
 	const plistPath = path.join(launchAgentsDir, `${label}.plist`);
 	const plist = plistDocument(label, [bun, scriptPath, 'start', '--name', name], {
 		startInterval: 60,
@@ -1246,8 +1295,13 @@ async function installAppLaunchAgent(name: string) {
 	});
 	await writeFile(plistPath, plist);
 	run('launchctl', ['bootout', `gui/${process.getuid?.()}`, plistPath], { allowFailure: true });
+	run('launchctl', ['enable', `gui/${process.getuid?.()}/${label}`]);
 	run('launchctl', ['bootstrap', `gui/${process.getuid?.()}`, plistPath], { allowFailure: true });
 	run('launchctl', ['kickstart', '-k', `gui/${process.getuid?.()}/${label}`], { allowFailure: true });
+}
+
+function appLaunchAgentLabel(name: string) {
+	return `lol.stf.repo-containers.${name}`;
 }
 
 async function installCleanupLaunchAgent() {

@@ -86,6 +86,10 @@ return freed blocks to macOS. Cache used by active builds is preserved, so 2 GB 
 a cleanup target, not a hard disk limit. Running app containers and their data are
 unaffected. Evicted layers are rebuilt when needed.
 
+`setup-repo-container disable --name <app>` stops an app's container (kept, with its data),
+removes its route, and turns off its LaunchAgent; deploys of a disabled app fail until
+`setup-repo-container enable --name <app>`. Enabled apps start at boot 30s after boot, 5s apart.
+
 Run `setup-repo-container cleanup --install` to clean up now and install the hourly
 job on an existing machine. Ordinary `cleanup` removes unused repo images and
 prunes builder cache; `--builder` clears all unused builder cache, and
