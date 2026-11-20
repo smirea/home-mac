@@ -92,7 +92,7 @@ async function servePublicIndex(request: Request, publicDir: string) {
 	const files = entries
 		.filter(entry => entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/i.test(entry.name))
 		.map(entry => entry.name)
-		.sort((left, right) => left.localeCompare(right));
+		.toSorted((left, right) => left.localeCompare(right));
 	const items = files
 		.map(filename => `<li><a href="/public/${encodeURIComponent(filename)}">${escapeHtml(filename)}</a></li>`)
 		.join('');

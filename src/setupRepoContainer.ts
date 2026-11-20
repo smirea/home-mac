@@ -102,6 +102,23 @@ process.env.PATH = `${pathEntries.join(':')}:${process.env.PATH ?? ''}`;
 
 const cli = parseCli(Bun.argv.slice(2));
 
+// With no command the script deploys, so a bare `--help` must stop before that.
+if (cli.options.has('help') || cli.positionals.includes('-h')) {
+	console.log(`Usage: setup-repo-container [command] [--repo <name>] [options]
+
+Commands:
+  deploy [repo]            Build and run a repo's container (the default; repo defaults to decideroo)
+  start --name <app>       Start an installed app (what its LaunchAgent runs)
+  refresh-router           Rebuild the Cloudflare tunnel router
+  cleanup                  Delete unused repo images and prune the BuildKit cache to 2 GB
+                           (--cache-only: just the cache; --builder: the whole cache; --skip-builder)
+  status                   List containers and apps
+  disable|enable --name <app>  Stop an app and keep it stopped, or allow it again
+
+Repos are listed in src/repoConfig.ts.`);
+	process.exit(0);
+}
+
 if (cli.command === 'deploy') {
 	await deploy(cli);
 } else if (cli.command === 'start') {
@@ -792,7 +809,7 @@ async function writeRuntimeEnv(repoDir: string, runtimeEnvPath: string, required
 		...required,
 	};
 	const body = Object.entries(env)
-		.sort(([left], [right]) => left.localeCompare(right))
+		.toSorted(([left], [right]) => left.localeCompare(right))
 		.map(([key, value]) => `${key}=${quoteEnv(value)}`)
 		.join('\n');
 	await writeFile(runtimeEnvPath, `${body}\n`, { mode: 0o600 });
@@ -944,7 +961,7 @@ async function withRouterLock<T>(fn: () => Promise<T>): Promise<T> {
 				await rm(routerLockPath, { recursive: true, force: true });
 				continue;
 			}
-			if (Date.now() > deadline) throw new Error(`Timed out waiting for ${routerLockPath}`);
+			if (Date.now() > deadline) throw new Error(`Timed out waiting for ${routerLockPath}`, { cause: error });
 			await Bun.sleep(1000);
 		}
 	}
@@ -1032,7 +1049,7 @@ async function writeCloudflaredRouterConfig(state: State, tunnel: TunnelState) {
 			: '';
 	const appRules = Object.values(state.apps)
 		.filter(app => appTunnelName(app) === tunnel.name && app.containerIp && !app.disabled)
-		.sort((left, right) => left.hostname.localeCompare(right.hostname))
+		.toSorted((left, right) => left.hostname.localeCompare(right.hostname))
 		.map(app => `  - hostname: ${app.hostname}\n    service: http://${app.containerIp}:${app.containerPort}`)
 		.join('\n');
 	const rules = [controlPlaneRule, appRules].filter(Boolean).join('\n');
